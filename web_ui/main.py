@@ -309,6 +309,22 @@ def _rts_profile_for_request(request: Request) -> str:
     return rts_profile_for_web_user(session_username(request))
 
 
+def _require_operator_rts_profile(request: Request) -> str:
+    """Supplier draft/publish actions require login as IPSokolova/Nacpro (not admin)."""
+    profile = _rts_profile_for_request(request)
+    known = list_known_profiles()
+    if auth_enabled() and (not profile or profile not in known):
+        names = ", ".join(known) if known else "IPSokolova, Nacpro"
+        raise HTTPException(
+            status_code=401,
+            detail=(
+                f"Войдите в консоль под оператором ({names}). "
+                f"Сейчас сессия: «{session_username(request) or '—'}» — для неё нет cookie ЛК поставщика."
+            ),
+        )
+    return profile
+
+
 def _pp_draft_profiles_for_request(request: Request) -> tuple[list[str], bool]:
     """Profiles whose PP drafts are visible; admin sees all operator profiles."""
     user = session_username(request)
@@ -5102,9 +5118,7 @@ async def api_rts_pp_draft_from_notice(request: Request, _: Auth) -> dict[str, A
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
     created_by = str(request.session.get(SESSION_USER_KEY) or "").strip()
-    profile = _rts_profile_for_request(request)
-    if auth_enabled() and not profile:
-        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    profile = _require_operator_rts_profile(request)
     return _rts_pp_draft_from_notice(
         purchase_number=str(body.get("purchase_number") or ""),
         line_key=str(body.get("line_key") or ""),
@@ -5123,9 +5137,7 @@ async def api_rts_pp_draft_from_monitor(request: Request, _: Auth) -> dict[str, 
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
     created_by = str(request.session.get(SESSION_USER_KEY) or "").strip()
-    profile = _rts_profile_for_request(request)
-    if auth_enabled() and not profile:
-        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    profile = _require_operator_rts_profile(request)
     offer_id = str(body.get("offer_price_list_item_id") or "")
     cookie_path = _cookie_path_for_request(request)
     _LOG_WEB.info(
@@ -5267,9 +5279,7 @@ async def api_rts_pp_publish_start(request: Request, _: Auth) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
-    profile = _rts_profile_for_request(request)
-    if auth_enabled() and not profile:
-        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    profile = _require_operator_rts_profile(request)
     try:
         draft_id = int(body.get("rts_draft_id") or 0)
     except (TypeError, ValueError) as exc:
@@ -5296,9 +5306,7 @@ async def api_rts_pp_publish_submit_signatures(request: Request, _: Auth) -> dic
         raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
-    profile = _rts_profile_for_request(request)
-    if auth_enabled() and not profile:
-        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    profile = _require_operator_rts_profile(request)
     try:
         job_id = int(body.get("job_id") or 0)
     except (TypeError, ValueError) as exc:
@@ -5323,9 +5331,7 @@ def api_rts_pp_publish_status(
     _: Auth,
     job_id: Annotated[int, Query()],
 ) -> dict[str, Any]:
-    profile = _rts_profile_for_request(request)
-    if auth_enabled() and not profile:
-        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    profile = _require_operator_rts_profile(request)
     result = get_publish_job_status(
         analytics_db=_eis_analytics_db_path(),
         job_id=int(job_id),
@@ -5342,9 +5348,7 @@ async def api_rts_pp_publish_cancel(request: Request, _: Auth) -> dict[str, Any]
         raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
-    profile = _rts_profile_for_request(request)
-    if auth_enabled() and not profile:
-        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    profile = _require_operator_rts_profile(request)
     try:
         job_id = int(body.get("job_id") or 0)
     except (TypeError, ValueError) as exc:
