@@ -21,6 +21,29 @@ GitHub / rsync
 
 Одноразовая подготовка: `sudo bash deploy/prepare_cohosted_vm.sh`
 
+## Справочник шаблонов ПП (обязательно для «Участвовать» / «Создать черновик»)
+
+Черновик ПП создаётся только если КТРУ есть в `$RTS_META_DIR/ktru_rts_cache`
+(на rts-local: `/var/lib/rts_local/ktru_rts_cache`). Иначе UI пишет
+«КТРУ нет в справочнике шаблонов ПП (draft_ktru_dict)».
+
+На co-hosted VM скопируйте кэш с prod:
+
+```bash
+sudo bash /opt/rts_local/app/deploy/sync_ktru_cache_from_prod.sh
+```
+
+Или импортируйте dump `KTRU/draft_ktru_dict.txt` (файл ~30 MB, в git не хранится):
+
+```bash
+# положите draft_ktru_dict.txt в /opt/rts_local/app/KTRU/
+cd /opt/rts_local/app
+/opt/rts_local/venv/bin/python tools/import_draft_ktru_dict.py \
+  --cache-dir /var/lib/rts_local/ktru_rts_cache
+```
+
+Перезапуск сервиса не нужен — шаблоны читаются с диска.
+
 ## 0. Перед первым деплоем — целостность кода
 
 В `rts_local` сейчас **не хватает модулей и шаблонов**, без которых `python -m web_ui` падает на import.

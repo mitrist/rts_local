@@ -34,6 +34,9 @@ ktru_rts_cache/
 price_order/
 linux_russian_trusted_root_ca_pem/
 
+# Large RTS Ktru/search dump (import via tools/import_draft_ktru_dict.py)
+KTRU/draft_ktru_dict.txt
+
 # One-off probe/deploy scripts (often contain host passwords / local SSH paths)
 tools/_*.py
 
