@@ -1,0 +1,979 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>{{ page_heading }}</h2>
+
+<div class="card">
+  <h3>Закупки с загруженными характеристиками</h3>
+  {% if html_flash_ok %}<div class="msg ok">{{ html_flash_ok }}</div>{% endif %}
+  {% if html_flash_err %}<div class="msg err">{{ html_flash_err }}</div>{% endif %}
+
+  <form method="get" action="{{ request.url_for(page_route) }}" class="offer-filter-form">
+    {% if show_date_filter %}
+    <label for="offer-day-date">Дата (MSK)</label>
+    <div class="offer-filter-row">
+      <input type="date" name="date" id="offer-day-date" value="{{ selected_date }}">
+      <button type="submit">Показать</button>
+    </div>
+    {% endif %}
+    {% if show_ktru_filter %}
+    <label for="offer-ktru-search">Фильтр по КТРУ</label>
+    <div class="offer-filter-row">
+      <input type="text" name="ktru" id="offer-ktru-search" value="{{ ktru_query }}" placeholder="Один или несколько КТРУ через пробел, запятую или ;">
+      <button type="submit">Найти</button>
+      {% if ktru_query %}
+        <a class="button secondary" href="{{ request.url_for(page_route) }}">Сбросить</a>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if show_catalog_filter %}
+    <label for="offer-catalog-filter">КТРУ из справочника предложений</label>
+    <div class="offer-filter-row">
+      <select name="catalog" id="offer-catalog-filter">
+        <option value="0" {% if not catalog_only %}selected{% endif %}>Все</option>
+        <option value="1" {% if catalog_only %}selected{% endif %}>Только из справочника</option>
+      </select>
+      <button type="submit">Применить</button>
+    </div>
+    {% endif %}
+  </form>
+
+  {% if rows and rows|length > 0 %}
+  <div class="offer-pagination">
+    <span class="hint">Показаны строки {{ pagination.first_row }}–{{ pagination.last_row }} из {{ pagination.total_rows }} · страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+        <a class="button secondary" href="{{ request.url_for(page_route) }}?{{ offer_matching_base_query }}page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% else %}
+        <span class="button secondary disabled">← Предыдущая</span>
+      {% endif %}
+      {% if pagination.has_next %}
+        <a class="button secondary" href="{{ request.url_for(page_route) }}?{{ offer_matching_base_query }}page={{ pagination.next_page }}">Следующая →</a>
+      {% else %}
+        <span class="button secondary disabled">Следующая →</span>
+      {% endif %}
+    </div>
+  </div>
+  <details class="offer-columns-panel">
+    <summary>Колонки</summary>
+    <div class="offer-columns-controls" data-offer-column-controls></div>
+    <button type="button" class="secondary" data-offer-columns-reset>Сбросить настройки колонок</button>
+  </details>
+  <table class="eis-table offer-matching-table" id="offer-matching-table">
+    <colgroup>
+      <col data-offer-col="purchase">
+      <col data-offer-col="pub_date">
+      <col data-offer-col="ktru">
+      <col data-offer-col="position">
+      <col data-offer-col="customer">
+      <col data-offer-col="price">
+      <col data-offer-col="price_unit">
+      <col data-offer-col="notice_sum">
+      <col data-offer-col="procedure_status">
+      {% if participation_price_ord_enabled %}
+      <col data-offer-col="profitability">
+      {% endif %}
+      <col data-offer-col="actions">
+    </colgroup>
+    <thead>
+      <tr>
+        <th data-offer-col="purchase">Закупка</th>
+        <th data-offer-col="pub_date">RSS pubDate</th>
+        <th data-offer-col="ktru">КТРУ</th>
+        <th data-offer-col="position">Позиция</th>
+        <th data-offer-col="customer">Заказчик</th>
+        <th data-offer-col="price">Цена</th>
+        <th data-offer-col="price_unit">Цена за ед.</th>
+        <th data-offer-col="notice_sum">Сумма в извещении</th>
+        <th data-offer-col="procedure_status">Статус процедуры</th>
+        {% if participation_price_ord_enabled %}
+        <th data-offer-col="profitability">Рентабельность</th>
+        {% endif %}
+        <th data-offer-col="actions">Действие</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr class="offer-profit-row{% if row.profitability_condition %} offer-profit-row--{{ row.profitability_condition }}{% endif %}">
+        <td data-offer-col="purchase">
+          {% if row.source_url %}<a href="{{ row.source_url }}" target="_blank" rel="noopener"><code>{{ row.purchase_number }}</code></a>{% else %}<code>{{ row.purchase_number }}</code>{% endif %}
+        </td>
+        <td data-offer-col="pub_date">{{ row.pub_display_msk or '—' }}</td>
+        <td data-offer-col="ktru"><code>{{ row.ktru_code or '—' }}</code></td>
+        <td data-offer-col="position">
+          {{ row.position_display_name or '—' }}
+          {% if row.html_status == 'not_loaded' %}
+            <div class="hint">карточка ЕИС не загружена</div>
+          {% elif row.html_status == 'error' %}
+            <div class="hint">ошибка HTML: {{ row.html_error_text or '—' }}</div>
+          {% endif %}
+        </td>
+        <td data-offer-col="customer" class="offer-customer-cell">{{ row.customer_name or '—' }}</td>
+        <td data-offer-col="price">{{ row.line_sum_text or row.price_text or '—' }}</td>
+        <td data-offer-col="price_unit">{{ row.price_per_unit_text or '—' }}</td>
+        <td data-offer-col="notice_sum">{{ row.price_text or '—' }}</td>
+        <td data-offer-col="procedure_status">
+          {% if row.procedure_status_label %}
+          <strong>{{ row.procedure_status_label }}</strong>
+          {% if row.price_key_breakdown %}
+          <br><span class="hint">{{ row.price_key_breakdown }} ₽</span>
+          {% endif %}
+          {% if row.winner_pp_match_count or row.pp_match_count %}
+          <br><a href="{{ request.url_for('page_eis_pp_link') }}?purchase_number={{ row.purchase_number | urlencode }}&amp;line_key={{ row.line_key | urlencode }}&amp;offer_id={{ row.pp_match_offer_id | urlencode }}">ПП: {{ row.pp_match_offer_id }}{% if not row.winner_pp_match_count %} (руч.){% endif %}</a>
+          {% elif row.eis_outcome == 'completed_winner' %}
+          <br><span class="hint">{% if row.pp_search_hint %}{{ row.pp_search_hint }}{% else %}ПП не найдено{% endif %}</span>
+          {% endif %}
+          {% else %}
+          —
+          {% endif %}
+        </td>
+        {% if participation_price_ord_enabled %}
+        <td data-offer-col="profitability">
+          <span class="offer-profitability{% if row.profitability_is_message %} offer-profitability--message{% endif %} {{ row.profitability_class or 'offer-profit--na' }}"
+                {% if row.profitability_is_message %}title="{{ row.profitability_text or 'н/д' }}"{% endif %}>{{ row.profitability_text or 'н/д' }}</span>
+        </td>
+        {% endif %}
+        <td data-offer-col="actions">
+          {% if row.html_status == 'loaded' and row.line_key %}
+            <button type="button"
+                    class="offer-open-modal"
+                    data-purchase-number="{{ row.purchase_number }}"
+                    data-line-key="{{ row.line_key }}"
+                    title="Открыть подбор"
+                    aria-label="Открыть подбор">↗</button>
+            <a class="button secondary offer-create-preoffer"
+               href="{{ request.url_for('page_preoffers') }}?from_purchase={{ row.purchase_number }}&line_key={{ row.line_key }}"
+               title="Создать предложение из закупки"
+               aria-label="Создать предложение из закупки">+</a>
+            <a class="button secondary"
+               href="{{ request.url_for('page_eis_pp_link') }}?purchase_number={{ row.purchase_number | urlencode }}&amp;line_key={{ row.line_key | urlencode }}"
+               title="Связь ЕИС-ПП"
+               aria-label="Связь ЕИС-ПП">↔</a>
+          {% else %}
+            <form method="post" action="{{ request.url_for('action_eis_notice_html_fetch') }}">
+              <input type="hidden" name="purchase_number" value="{{ row.purchase_number }}">
+              <input type="hidden" name="source_url" value="{{ row.source_url or '' }}">
+              <input type="hidden" name="return_to" value="{{ html_return_to }}">
+              <button type="submit" title="Загрузить HTML карточку" aria-label="Загрузить HTML карточку">⇩</button>
+            </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <div class="offer-pagination offer-pagination-bottom">
+    <span class="hint">Страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+        <a class="button secondary" href="{{ request.url_for(page_route) }}?{{ offer_matching_base_query }}page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% endif %}
+      {% if pagination.has_next %}
+        <a class="button secondary" href="{{ request.url_for(page_route) }}?{{ offer_matching_base_query }}page={{ pagination.next_page }}">Следующая →</a>
+      {% endif %}
+    </div>
+  </div>
+  {% else %}
+  <p class="hint">{{ empty_hint }}</p>
+  {% endif %}
+</div>
+
+<div id="offer-modal" class="eis-modal" hidden aria-hidden="true">
+  <div class="eis-modal-backdrop" data-offer-modal-close tabindex="-1"></div>
+  <div class="eis-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="offer-modal-heading">
+    <div class="eis-modal-toolbar">
+      <button type="button" class="eis-modal-close" data-offer-modal-close aria-label="Закрыть">×</button>
+    </div>
+    <div id="offer-participate-status" class="offer-participate-status" hidden></div>
+    <h4 id="offer-modal-heading" class="eis-modal-heading">Участие в процедуре</h4>
+    <p id="offer-modal-position" class="eis-modal-position"></p>
+    <div class="eis-modal-customer-block">
+      <div class="eis-modal-customer-label">Наименование заказчика</div>
+      <div id="offer-modal-customer" class="eis-modal-customer-org">—</div>
+    </div>
+    <dl class="eis-modal-meta offer-modal-meta">
+      <div><dt>ед. измерения</dt><dd id="offer-modal-unit">—</dd></div>
+      <div><dt>Количество (объем работы, услуги)</dt><dd id="offer-modal-quantity">—</dd></div>
+      <div><dt>Цена за ед.</dt><dd id="offer-modal-price-unit">—</dd></div>
+    </dl>
+    <div id="offer-modal-economics" class="offer-modal-economics"></div>
+    <dl class="eis-modal-meta offer-modal-meta">
+      <div><dt>Извещение / закупка</dt><dd id="offer-modal-purchase">—</dd></div>
+      <div><dt>Код КТРУ</dt><dd id="offer-modal-ktru">—</dd></div>
+      <div><dt>Дата начала исполнения контракта</dt><dd id="offer-modal-contract-start">—</dd></div>
+      <div><dt>Срок исполнения контракта</dt><dd id="offer-modal-contract-term">—</dd></div>
+      <div><dt>Регион</dt><dd id="offer-modal-region">—</dd></div>
+      <div><dt>Срок поставки товара, дней</dt><dd id="offer-modal-delivery-days">—</dd></div>
+    </dl>
+    <div class="eis-modal-customer-block offer-modal-delivery-block">
+      <div class="eis-modal-customer-label">Место поставки товара</div>
+      <div id="offer-modal-delivery-place" class="eis-modal-customer-org">—</div>
+    </div>
+    <div id="offer-modal-body"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var participationPriceOrdEnabled = {{ participation_price_ord_enabled | tojson }};
+  var table = document.getElementById("offer-matching-table");
+  var columnControls = document.querySelector("[data-offer-column-controls]");
+  var resetColumnsBtn = document.querySelector("[data-offer-columns-reset]");
+  var columnStorageKey = "rts.offerMatching.columns.v5";
+  var columns = [
+    { id: "purchase", label: "Закупка", width: 130, required: true },
+    { id: "pub_date", label: "RSS pubDate", width: 115 },
+    { id: "ktru", label: "КТРУ", width: 120 },
+    { id: "position", label: "Позиция", width: 260 },
+    { id: "customer", label: "Заказчик", width: 320, defaultHidden: true },
+    { id: "price", label: "Цена", width: 95, defaultHidden: true },
+    { id: "price_unit", label: "Цена за ед.", width: 95, defaultHidden: true },
+    { id: "notice_sum", label: "Сумма в извещении", width: 130 },
+    { id: "procedure_status", label: "Статус процедуры", width: 200 },
+    { id: "profitability", label: "Рентабельность", width: 130 },
+    { id: "actions", label: "Действие", width: 95, required: true }
+  ].filter(function (col) {
+    return participationPriceOrdEnabled || col.id !== "profitability";
+  });
+  var columnState = loadColumnState();
+
+  function loadColumnState() {
+    try {
+      return JSON.parse(localStorage.getItem(columnStorageKey) || "{}") || {};
+    } catch (e) {
+      return {};
+    }
+  }
+  function saveColumnState() {
+    localStorage.setItem(columnStorageKey, JSON.stringify(columnState));
+  }
+  function colConfig(id) {
+    return columns.filter(function (c) { return c.id === id; })[0];
+  }
+  function isVisible(id) {
+    var cfg = colConfig(id);
+    if (cfg && cfg.required) return true;
+    if (columnState[id] && typeof columnState[id].hidden === "boolean") return !columnState[id].hidden;
+    return !(cfg && cfg.defaultHidden);
+  }
+  function widthFor(id) {
+    var cfg = colConfig(id) || { width: 120 };
+    return Math.max(60, Number(columnState[id] && columnState[id].width || cfg.width));
+  }
+  function applyColumns() {
+    if (!table) return;
+    columns.forEach(function (col) {
+      var visible = isVisible(col.id);
+      var width = widthFor(col.id);
+      table.querySelectorAll('[data-offer-col="' + col.id + '"]').forEach(function (el) {
+        if (el.tagName === "COL") {
+          el.style.width = width + "px";
+        } else {
+          el.style.display = visible ? "" : "none";
+        }
+      });
+    });
+    if (columnControls) {
+      columnControls.querySelectorAll("input[data-offer-column-toggle]").forEach(function (input) {
+        input.checked = isVisible(input.value);
+      });
+    }
+  }
+  function buildColumnControls() {
+    if (!columnControls) return;
+    columnControls.innerHTML = "";
+    columns.forEach(function (col) {
+      var label = document.createElement("label");
+      var input = document.createElement("input");
+      input.type = "checkbox";
+      input.value = col.id;
+      input.checked = isVisible(col.id);
+      input.disabled = !!col.required;
+      input.setAttribute("data-offer-column-toggle", "1");
+      input.addEventListener("change", function () {
+        columnState[col.id] = columnState[col.id] || {};
+        columnState[col.id].hidden = !input.checked;
+        saveColumnState();
+        applyColumns();
+      });
+      label.appendChild(input);
+      label.appendChild(document.createTextNode(" " + col.label));
+      columnControls.appendChild(label);
+    });
+  }
+  function makeResizableHeaders() {
+    if (!table) return;
+    table.querySelectorAll("thead th[data-offer-col]").forEach(function (th) {
+      if (th.querySelector(".offer-col-resizer")) return;
+      var id = th.getAttribute("data-offer-col");
+      var handle = document.createElement("span");
+      handle.className = "offer-col-resizer";
+      handle.setAttribute("aria-hidden", "true");
+      th.appendChild(handle);
+      handle.addEventListener("mousedown", function (event) {
+        event.preventDefault();
+        var startX = event.clientX;
+        var startWidth = widthFor(id);
+        document.body.classList.add("offer-column-resizing");
+        function onMove(moveEvent) {
+          columnState[id] = columnState[id] || {};
+          columnState[id].width = Math.max(60, startWidth + moveEvent.clientX - startX);
+          applyColumns();
+        }
+        function onUp() {
+          document.body.classList.remove("offer-column-resizing");
+          saveColumnState();
+          window.removeEventListener("mousemove", onMove);
+          window.removeEventListener("mouseup", onUp);
+        }
+        window.addEventListener("mousemove", onMove);
+        window.addEventListener("mouseup", onUp);
+      });
+    });
+  }
+  if (resetColumnsBtn) {
+    resetColumnsBtn.addEventListener("click", function () {
+      columnState = {};
+      localStorage.removeItem(columnStorageKey);
+      applyColumns();
+    });
+  }
+  buildColumnControls();
+  makeResizableHeaders();
+  applyColumns();
+
+  var modal = document.getElementById("offer-modal");
+  var body = document.getElementById("offer-modal-body");
+  var economicsPanel = document.getElementById("offer-modal-economics");
+  var modalPosition = document.getElementById("offer-modal-position");
+  var modalCustomer = document.getElementById("offer-modal-customer");
+  var modalPurchase = document.getElementById("offer-modal-purchase");
+  var modalKtru = document.getElementById("offer-modal-ktru");
+  var modalUnit = document.getElementById("offer-modal-unit");
+  var modalQuantity = document.getElementById("offer-modal-quantity");
+  var modalPriceUnit = document.getElementById("offer-modal-price-unit");
+  var modalContractStart = document.getElementById("offer-modal-contract-start");
+  var modalContractTerm = document.getElementById("offer-modal-contract-term");
+  var modalRegion = document.getElementById("offer-modal-region");
+  var modalDeliveryPlace = document.getElementById("offer-modal-delivery-place");
+  var modalDeliveryDays = document.getElementById("offer-modal-delivery-days");
+  var participateBtn = document.getElementById("offer-participate-btn");
+  var participateStatus = document.getElementById("offer-participate-status");
+  var currentPosition = null;
+  var participateBusy = false;
+  var manualPpBusy = false;
+  var manualPpBlock = null;
+  if (!modal || !body || !economicsPanel) return;
+
+  function openModal() {
+    modal.removeAttribute("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    document.documentElement.style.overflow = "hidden";
+  }
+  function closeModal() {
+    modal.setAttribute("hidden", "");
+    modal.setAttribute("aria-hidden", "true");
+    document.documentElement.style.overflow = "";
+  }
+  modal.querySelectorAll("[data-offer-modal-close]").forEach(function (el) {
+    el.addEventListener("click", closeModal);
+  });
+
+  function td(text) {
+    var cell = document.createElement("td");
+    cell.textContent = text || "—";
+    return cell;
+  }
+
+  function setText(el, text) {
+    if (el) el.textContent = text || "—";
+  }
+
+  function setParticipateStatus(html, kind) {
+    if (!participateStatus) return;
+    if (!html) {
+      participateStatus.hidden = true;
+      participateStatus.innerHTML = "";
+      participateStatus.className = "offer-participate-status";
+      return;
+    }
+    participateStatus.hidden = false;
+    participateStatus.className = "offer-participate-status" + (kind ? " offer-participate-status--" + kind : "");
+    participateStatus.innerHTML = html;
+  }
+
+  function showParticipateDraft(draft) {
+    if (!draft || !draft.edit_url) return;
+    var html = 'Черновик ПП создан (id ' + (draft.rts_draft_id || "—") + '). ';
+    if (draft.protected_id) {
+      html += '<a href="' + draft.edit_url + '" target="_blank" rel="noopener">Открыть черновик в РТС</a>';
+    } else {
+      html += '<a href="' + draft.edit_url + '" target="_blank" rel="noopener">Список черновиков в РТС</a>';
+      html += ' — найдите позицию по КТРУ и откройте из списка.';
+      if (draft.registry_warning) {
+        html += '<br><span class="hint">' + draft.registry_warning + '</span>';
+      }
+    }
+    setParticipateStatus(html, draft.protected_id ? "ok" : "warn");
+    if (participateBtn) participateBtn.hidden = true;
+  }
+
+  function mountParticipateButton(participateBody) {
+    if (!participateBtn || !participateBody) return;
+    if (participateBtn.parentElement !== participateBody) {
+      participateBody.appendChild(participateBtn);
+    }
+  }
+
+  function needsManualPpLink(position) {
+    return !!(position && position.html_status === "loaded" && position.line_key);
+  }
+
+  function removeManualPpBlock() {
+    if (manualPpBlock && manualPpBlock.parentElement) {
+      manualPpBlock.parentElement.removeChild(manualPpBlock);
+    }
+    manualPpBlock = null;
+  }
+
+  function setManualPpStatus(html, kind) {
+    if (!manualPpBlock) return;
+    var statusEl = manualPpBlock.querySelector(".offer-manual-pp-status");
+    if (!statusEl) return;
+    if (!html) {
+      statusEl.hidden = true;
+      statusEl.innerHTML = "";
+      statusEl.className = "offer-manual-pp-status";
+      return;
+    }
+    statusEl.hidden = false;
+    statusEl.className = "offer-manual-pp-status" + (kind ? " offer-manual-pp-status--" + kind : "");
+    statusEl.innerHTML = html;
+  }
+
+  function renderManualPpBlock(position, participateBlock, participateBody) {
+    removeManualPpBlock();
+    if (!needsManualPpLink(position) || !participateBlock || !participateBody) return;
+
+    var wrap = participateBody.parentElement;
+    if (!wrap || !wrap.classList.contains("offer-modal-actions-wrap")) {
+      wrap = document.createElement("div");
+      wrap.className = "offer-modal-actions-wrap";
+      participateBlock.insertBefore(wrap, participateBody);
+      wrap.appendChild(participateBody);
+    }
+    participateBlock.classList.add("offer-participate-block--with-manual");
+
+    manualPpBlock = document.createElement("div");
+    manualPpBlock.className = "offer-manual-pp-block";
+    manualPpBlock.innerHTML =
+      '<div class="offer-manual-pp-block__title">Id ПП (ручной ввод)</div>' +
+      '<label class="offer-manual-pp-field">' +
+      '<span class="offer-manual-pp-field__label">offer id</span>' +
+      '<input type="text" class="offer-manual-pp-input" placeholder="D5q0Z9u0HpHv" autocomplete="off">' +
+      "</label>" +
+      '<label class="offer-manual-pp-field offer-manual-pp-field--optional">' +
+      '<span class="offer-manual-pp-field__label">дата в реестре (МСК)</span>' +
+      '<input type="text" class="offer-manual-pp-date" placeholder="16.07.2026 11:16:59">' +
+      "</label>" +
+      '<button type="button" class="secondary offer-manual-pp-submit">Привязать ПП</button>' +
+      '<div class="offer-manual-pp-status" hidden></div>';
+    wrap.appendChild(manualPpBlock);
+
+    if (position.pp_search_hint) {
+      var hint = document.createElement("div");
+      hint.className = "hint offer-manual-pp-hint";
+      hint.textContent = position.pp_search_hint;
+      manualPpBlock.insertBefore(hint, manualPpBlock.firstChild.nextSibling);
+    } else if (position.pp_match_offer_id) {
+      var linked = document.createElement("div");
+      linked.className = "hint offer-manual-pp-hint";
+      linked.innerHTML = "Уже привязано: <code>" + position.pp_match_offer_id + "</code> — можно указать другой id.";
+      manualPpBlock.insertBefore(linked, manualPpBlock.firstChild.nextSibling);
+    }
+
+    var input = manualPpBlock.querySelector(".offer-manual-pp-input");
+    var dateInput = manualPpBlock.querySelector(".offer-manual-pp-date");
+    var submitBtn = manualPpBlock.querySelector(".offer-manual-pp-submit");
+    if (position.pp_match_offer_id && input) {
+      input.value = position.pp_match_offer_id;
+    }
+
+    submitBtn.addEventListener("click", function () {
+      if (manualPpBusy || !currentPosition) return;
+      var oid = (input && input.value ? input.value : "").trim();
+      if (!oid) {
+        setManualPpStatus("Укажите Id ПП.", "err");
+        return;
+      }
+      manualPpBusy = true;
+      submitBtn.disabled = true;
+      setManualPpStatus("Загрузка find и compare…", "pending");
+      fetch("/api/eis-pp/manual-register", {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({
+          purchase_number: currentPosition.purchase_number,
+          line_key: currentPosition.line_key,
+          offer_id: oid,
+          link_date_msk: dateInput && dateInput.value ? dateInput.value.trim() : ""
+        })
+      })
+        .then(function (resp) {
+          return resp.json().then(function (data) {
+            if (!resp.ok) {
+              var detail = data && data.detail ? data.detail : ("HTTP " + resp.status);
+              throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+            }
+            return data;
+          });
+        })
+        .then(function (data) {
+          manualPpBusy = false;
+          submitBtn.disabled = false;
+          currentPosition.pp_match_count = Math.max(1, Number(currentPosition.pp_match_count || 0));
+          currentPosition.pp_match_offer_id = data.offer_price_list_item_id || oid;
+          var exactLabel = data.is_exact_match ? "exact" : (data.matched_count + "/" + data.total_compared);
+          var html = "Пара сохранена (" + exactLabel + ", lag " + (data.lag_label || "—") + "). "
+            + '<a href="' + (data.eis_pp_link_url || "#") + '">Связь ЕИС-ПП</a>';
+          if (data.pp_offer_url) {
+            html += ' · <a href="' + data.pp_offer_url + '" target="_blank" rel="noopener">карточка ПП</a>';
+          }
+          setManualPpStatus(html, data.is_exact_match ? "ok" : "warn");
+        })
+        .catch(function (err) {
+          manualPpBusy = false;
+          submitBtn.disabled = false;
+          setManualPpStatus("Ошибка: " + (err && err.message ? err.message : err), "err");
+        });
+    });
+  }
+
+  function verifyStatusLabel(status) {
+    if (status === "ok") return "совпало";
+    if (status === "count_mismatch") return "не все значения";
+    if (status === "value_mismatch") return "расхождение";
+    if (status === "missing_in_draft") return "нет в черновике";
+    if (status === "unmatched_notice") return "нет в черновике";
+    if (status === "auto_filled") return "автозаполнение";
+    return status || "—";
+  }
+
+  function verifyStatusClass(status) {
+    if (status === "ok") return "match";
+    if (status === "auto_filled") return "missing";
+    return "mismatch";
+  }
+
+  function joinValues(values) {
+    if (!values || !values.length) return "—";
+    return values.join("; ");
+  }
+
+  function renderDraftVerifyTable(verifyReport, container) {
+    if (!container) return;
+    container.innerHTML = "";
+    if (!verifyReport || !verifyReport.rows || !verifyReport.rows.length) {
+      container.textContent = "Нет данных сверки.";
+      return;
+    }
+    var summary = document.createElement("div");
+    summary.className = "hint";
+    summary.textContent = "Совпало " + (verifyReport.ok || 0) + " из " + (verifyReport.total || 0)
+      + (verifyReport.issues ? ("; расхождений: " + verifyReport.issues) : "");
+    container.appendChild(summary);
+    var table = document.createElement("table");
+    table.className = "eis-table offer-compare-table";
+    table.innerHTML = "<thead><tr><th>Характеристика</th><th>ЕИС</th><th>Черновик РТС</th><th>Статус</th></tr></thead><tbody></tbody>";
+    var tbody = table.querySelector("tbody");
+    verifyReport.rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.className = "offer-compare-" + verifyStatusClass(row.status);
+      var label = row.notice_label || row.rts_name || row.rts_code || "—";
+      tr.appendChild(td(label));
+      tr.appendChild(td(joinValues(row.notice_values)));
+      tr.appendChild(td(joinValues(row.draft_values)));
+      var statusCell = td(verifyStatusLabel(row.status));
+      if (row.detail) statusCell.title = row.detail;
+      tr.appendChild(statusCell);
+      tbody.appendChild(tr);
+    });
+    var wrap = document.createElement("div");
+    wrap.className = "offer-compare-table-wrap";
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+  }
+
+  function loadDraftVerify(pn, lk, container, detailsEl) {
+    if (!pn || !lk || !container) return;
+    container.textContent = "Загрузка сверки…";
+    if (detailsEl) detailsEl.hidden = false;
+    fetch(
+      "/api/rts/pp/draft-verify?purchase_number=" + encodeURIComponent(pn)
+        + "&line_key=" + encodeURIComponent(lk),
+      { headers: { "Accept": "application/json" } }
+    )
+      .then(function (resp) {
+        return resp.json().then(function (data) {
+          if (!resp.ok) {
+            var detail = data && data.detail ? data.detail : ("HTTP " + resp.status);
+            throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+          }
+          return data;
+        });
+      })
+      .then(function (data) {
+        renderDraftVerifyTable(data.verify_report, container);
+      })
+      .catch(function (err) {
+        container.textContent = "Ошибка сверки: " + (err && err.message ? err.message : err);
+      });
+  }
+
+  function updateParticipateUi(position, rtsPpDraft, participateBlock, participateBody) {
+    currentPosition = position || null;
+    removeManualPpBlock();
+    if (participateBlock) participateBlock.classList.remove("offer-participate-block--with-manual");
+    if (participateBtn) {
+      participateBtn.hidden = true;
+      participateBtn.disabled = true;
+      participateBtn.title = "";
+    }
+    if (participateBlock) participateBlock.hidden = true;
+    setParticipateStatus("");
+    if (!position || position.html_status !== "loaded" || !position.line_key) return;
+    if (participateBlock) participateBlock.hidden = false;
+    if (rtsPpDraft && rtsPpDraft.edit_url) {
+      showParticipateDraft(rtsPpDraft);
+    } else {
+      mountParticipateButton(participateBody);
+      if (participateBtn) {
+        participateBtn.hidden = false;
+        var canParticipate = !!position.can_participate;
+        participateBtn.disabled = participateBusy || !canParticipate;
+        participateBtn.title = canParticipate ? "" : (position.participate_reason || "Участие недоступно");
+      }
+    }
+    renderManualPpBlock(position, participateBlock, participateBody);
+  }
+
+  function customerRowsFromPosition(position) {
+    return (position.characteristics || []).map(function (ch) {
+      return {
+        label: ch.display_label || ch.label || "—",
+        customer_value: ch.value_display || ch.value || "—",
+        offer_value: "—",
+        status: "no_offer"
+      };
+    });
+  }
+
+  function profitabilityClass(condition) {
+    if (condition === 1) return "offer-profit--green";
+    if (condition === 2) return "offer-profit--yellow";
+    if (condition === 3) return "offer-profit--red";
+    return "offer-profit--na";
+  }
+
+  function economicsUnavailableMessage(econ) {
+    return econ.unavailable_message || econ.profitability_text || "расчёт недоступен";
+  }
+
+  function renderMatch(position) {
+    body.innerHTML = "";
+    economicsPanel.innerHTML = "";
+    if (!position) {
+      body.textContent = "Позиция не найдена.";
+      return;
+    }
+    var best = position.best_match;
+    var econ = position.participation_economics || {};
+    var lineSumText = position.line_sum_text || position.price_text || "—";
+    setText(modalPosition, position.position_display_name || "—");
+    setText(modalCustomer, position.customer_name || "—");
+    setText(modalPurchase, position.purchase_number || "—");
+    setText(modalKtru, position.ktru_code || "—");
+    setText(modalUnit, position.unit_text || "—");
+    setText(modalQuantity, position.quantity_text || "—");
+    setText(modalPriceUnit, position.price_per_unit_text || "—");
+    setText(modalContractStart, position.contract_start_date || "—");
+    setText(modalContractTerm, position.contract_execution_term || "—");
+    setText(modalRegion, position.region || "—");
+    setText(modalDeliveryPlace, position.delivery_place || "—");
+    setText(modalDeliveryDays, position.delivery_days || "—");
+    if (position.procedure_status_label) {
+      var statusBlock = document.createElement("div");
+      statusBlock.className = "hint";
+      statusBlock.style.marginBottom = "0.75rem";
+      statusBlock.innerHTML = "<strong>Статус процедуры:</strong> " + position.procedure_status_label
+        + (position.price_key_breakdown ? (" · " + position.price_key_breakdown + " ₽") : "");
+      economicsPanel.appendChild(statusBlock);
+    }
+
+    var recRow = document.createElement("div");
+    recRow.className = "offer-recommendation-row";
+
+    var lineSumRef = document.createElement("div");
+    lineSumRef.className = "offer-line-sum-ref";
+    var lineSumTitle = document.createElement("div");
+    lineSumTitle.className = "offer-line-sum-ref__title";
+    lineSumTitle.textContent = "Сумма позиции";
+    var lineSumHint = document.createElement("div");
+    lineSumHint.className = "offer-line-sum-ref__hint";
+    lineSumHint.textContent = "×0,97 → ЦП";
+    var lineSumBody = document.createElement("div");
+    lineSumBody.className = "offer-line-sum-ref__body";
+    lineSumBody.innerHTML = "<strong class=\"offer-line-sum-ref__value\">" + lineSumText + " ₽</strong>";
+    lineSumRef.appendChild(lineSumTitle);
+    lineSumRef.appendChild(lineSumHint);
+    lineSumRef.appendChild(lineSumBody);
+
+    var economicsRef = document.createElement("div");
+    economicsRef.className = "offer-economics-ref";
+    var economicsTitle = document.createElement("div");
+    economicsTitle.className = "offer-economics-ref__title";
+    economicsTitle.textContent = "Экономика участия";
+    var economicsBody = document.createElement("div");
+    economicsBody.className = "offer-economics-ref__body";
+    if (econ.available) {
+      economicsBody.innerHTML =
+        "<div><span class=\"offer-economics-ref__label\">ЦП:</span> <strong class=\"offer-economics-ref__value\">" + (econ.cp || "—") + " ₽</strong></div>" +
+        "<div><span class=\"offer-economics-ref__label\">Рентабельность:</span> " +
+        "<span class=\"offer-profitability " + profitabilityClass(econ.condition) + "\">" + (econ.profitability_text || "—") + "</span></div>";
+    } else {
+      economicsBody.textContent = economicsUnavailableMessage(econ);
+      economicsBody.className = "offer-economics-ref__body offer-economics-ref__body--na offer-economics-ref__body--message";
+    }
+    economicsRef.appendChild(economicsTitle);
+    economicsRef.appendChild(economicsBody);
+
+    var cpkBlock = document.createElement("div");
+    cpkBlock.className = "offer-recommended-price-stub";
+    var cpkTitle = document.createElement("div");
+    cpkTitle.className = "offer-recommended-price-stub__title";
+    cpkTitle.textContent = "Расчетная цена участия";
+    var cpkBody = document.createElement("div");
+    cpkBody.className = "offer-recommended-price-stub__body";
+    var cpkValue = document.createElement("div");
+    cpkValue.className = "offer-recommended-price-placeholder offer-cpk-value";
+    if (econ.available) {
+      cpkValue.textContent = (econ.cpk || "—") + " ₽";
+      cpkValue.classList.add(profitabilityClass(econ.condition));
+    } else {
+      cpkValue.textContent = economicsUnavailableMessage(econ);
+      cpkValue.classList.add("offer-profit--na");
+    }
+    cpkBody.appendChild(cpkValue);
+    cpkBlock.appendChild(cpkTitle);
+    cpkBlock.appendChild(cpkBody);
+
+    var participateBlock = document.createElement("div");
+    participateBlock.className = "offer-participate-block";
+    participateBlock.hidden = true;
+    var participateBody = document.createElement("div");
+    participateBody.className = "offer-participate-block__body";
+    participateBlock.appendChild(participateBody);
+
+    recRow.appendChild(lineSumRef);
+    if (participationPriceOrdEnabled) {
+      cpkBlock.appendChild(participateBlock);
+      recRow.appendChild(economicsRef);
+      recRow.appendChild(cpkBlock);
+    } else {
+      lineSumRef.appendChild(participateBlock);
+    }
+    economicsPanel.appendChild(recRow);
+
+    var details = document.createElement("details");
+    details.className = "offer-chars-collapse";
+    var summary = document.createElement("summary");
+    summary.textContent = "Характеристики заказчика";
+    details.appendChild(summary);
+
+    var table = document.createElement("table");
+    table.className = "eis-table offer-compare-table";
+    table.innerHTML = "<thead><tr><th>Характеристика заказчика</th><th>Требование заказчика</th><th>Наше значение</th><th>Статус</th></tr></thead><tbody></tbody>";
+    var tbody = table.querySelector("tbody");
+    var rows = best ? best.rows : customerRowsFromPosition(position);
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.className = "offer-compare-" + row.status;
+      tr.appendChild(td(row.label));
+      tr.appendChild(td(row.customer_value));
+      tr.appendChild(td(row.offer_value));
+      tr.appendChild(td(row.status === "match" ? "совпало" : (row.status === "missing" ? "нет значения" : (row.status === "no_offer" ? "нет предложения" : "не совпало"))));
+      tbody.appendChild(tr);
+    });
+    if (!rows.length) {
+      var emptyTr = document.createElement("tr");
+      emptyTr.appendChild(td("Характеристики заказчика не найдены"));
+      emptyTr.appendChild(td("—"));
+      emptyTr.appendChild(td("—"));
+      emptyTr.appendChild(td("—"));
+      tbody.appendChild(emptyTr);
+    }
+    var tableWrap = document.createElement("div");
+    tableWrap.className = "offer-compare-table-wrap";
+    tableWrap.appendChild(table);
+    details.appendChild(tableWrap);
+    body.appendChild(details);
+
+    var verifyDetails = document.createElement("details");
+    verifyDetails.className = "offer-chars-collapse offer-draft-verify-collapse";
+    verifyDetails.hidden = true;
+    var verifySummary = document.createElement("summary");
+    verifySummary.textContent = "Сверка черновика РТС";
+    verifyDetails.appendChild(verifySummary);
+    var verifyBody = document.createElement("div");
+    verifyBody.className = "offer-draft-verify-body";
+    verifyDetails.appendChild(verifyBody);
+    body.appendChild(verifyDetails);
+
+    if (position.rts_pp_draft && position.rts_pp_draft.rts_draft_id) {
+      loadDraftVerify(
+        position.purchase_number,
+        position.line_key,
+        verifyBody,
+        verifyDetails
+      );
+    }
+
+    updateParticipateUi(position, position.rts_pp_draft || null, participateBlock, participateBody);
+  }
+
+  function showDraftVerifyReport(verifyReport, pn, lk) {
+    var verifyDetails = body.querySelector(".offer-draft-verify-collapse");
+    var verifyBody = body.querySelector(".offer-draft-verify-body");
+    if (!verifyDetails || !verifyBody) return;
+    verifyDetails.hidden = false;
+    renderDraftVerifyTable(verifyReport, verifyBody);
+    if (verifyDetails.open === false && verifyReport && verifyReport.issues > 0) {
+      verifyDetails.open = true;
+    }
+  }
+
+  function openCompareModal(pn, lineKey) {
+    if (!pn || !lineKey) return;
+    body.textContent = "Загрузка…";
+    economicsPanel.innerHTML = "";
+    setText(modalPosition, "");
+    setText(modalCustomer, "");
+    setText(modalPurchase, "");
+    setText(modalKtru, "");
+    setText(modalUnit, "");
+    setText(modalQuantity, "");
+    setText(modalPriceUnit, "");
+    setText(modalContractStart, "");
+    setText(modalContractTerm, "");
+    setText(modalRegion, "");
+    setText(modalDeliveryPlace, "");
+    setText(modalDeliveryDays, "");
+    updateParticipateUi(null, null, null, null);
+    openModal();
+    fetch("/api/offer-matching/" + encodeURIComponent(pn) + "?line_key=" + encodeURIComponent(lineKey), { headers: { "Accept": "application/json" } })
+      .then(function (resp) {
+        if (!resp.ok) {
+          return resp.text().then(function (t) {
+            throw new Error(t || ("HTTP " + resp.status));
+          });
+        }
+        return resp.json();
+      })
+      .then(function (data) {
+        if (typeof data.participation_price_ord_enabled === "boolean") {
+          participationPriceOrdEnabled = data.participation_price_ord_enabled;
+        }
+        var position = (data.positions || [])[0];
+        if (position && data.rts_pp_draft) {
+          position.rts_pp_draft = data.rts_pp_draft;
+        }
+        renderMatch(position);
+      })
+      .catch(function (err) { body.textContent = "Ошибка: " + err; });
+  }
+
+  if (!participateBtn) {
+    participateBtn = document.createElement("button");
+    participateBtn.type = "button";
+    participateBtn.className = "offer-participate-btn";
+    participateBtn.id = "offer-participate-btn";
+    participateBtn.hidden = true;
+    participateBtn.innerHTML = "<span class=\"offer-participate-btn__label\">Участвовать</span><span class=\"offer-participate-btn__hint\">Создание черновика ПП на РТС</span>";
+  }
+  if (participateBtn) {
+    participateBtn.addEventListener("click", function () {
+      if (!currentPosition || participateBusy || !currentPosition.can_participate) return;
+      var pn = currentPosition.purchase_number;
+      var lk = currentPosition.line_key;
+      if (!pn || !lk) return;
+      participateBusy = true;
+      participateBtn.disabled = true;
+      setParticipateStatus("Создание черновика ПП в РТС…", "pending");
+      fetch("/api/rts/pp/draft-from-notice", {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ purchase_number: pn, line_key: lk })
+      })
+        .then(function (resp) {
+          return resp.json().then(function (data) {
+            if (!resp.ok) {
+              var detail = data && data.detail ? data.detail : ("HTTP " + resp.status);
+              throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+            }
+            return data;
+          });
+        })
+        .then(function (data) {
+          participateBusy = false;
+          showParticipateDraft({
+            edit_url: data.edit_url,
+            rts_draft_id: data.rts_draft_id,
+            protected_id: data.protected_id,
+            registry_warning: data.registry_warning
+          });
+          if (currentPosition) {
+            currentPosition.rts_pp_draft = {
+              edit_url: data.edit_url,
+              rts_draft_id: data.rts_draft_id,
+              protected_id: data.protected_id,
+              registry_warning: data.registry_warning
+            };
+          }
+          if (data.verify_report) {
+            showDraftVerifyReport(data.verify_report, pn, lk);
+          }
+        })
+        .catch(function (err) {
+          participateBusy = false;
+          if (participateBtn) participateBtn.disabled = false;
+          var msg = String(err && err.message ? err.message : err);
+          var extra = "";
+          if (/справочнике ртс|ktru\/search|импортируйте json/i.test(msg)) {
+            extra = ' <a href="/session">Импорт Ktru/search</a>';
+          } else if (/cookie|сесс/i.test(msg)) {
+            extra = ' <a href="/session">Обновить cookie</a>';
+          }
+          setParticipateStatus("Ошибка: " + msg + extra, "err");
+        });
+    });
+  }
+
+  document.querySelectorAll(".offer-open-modal").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      openCompareModal(
+        btn.getAttribute("data-purchase-number"),
+        btn.getAttribute("data-line-key")
+      );
+    });
+  });
+
+  (function tryDeepLinkCompare() {
+    var params = new URLSearchParams(window.location.search);
+    if (params.get("open_compare") !== "1") return;
+    var pn = (params.get("purchase") || "").trim();
+    var lk = (params.get("line_key") || "").trim();
+    if (!pn || !lk) return;
+    openCompareModal(pn, lk);
+  })();
+})();
+</script>
+{% endblock %}

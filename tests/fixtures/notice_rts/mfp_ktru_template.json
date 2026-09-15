@@ -1,0 +1,56 @@
+{
+  "code": "26.20.18.000-00000068",
+  "name": "МФУ тест",
+  "version": 1,
+  "characteristics": [
+    {
+      "id": 889023,
+      "code": "d44b3b40-f",
+      "name": "Тип сканирования",
+      "isRequired": false,
+      "characteristicKind": {"id": 3, "name": "Изменяемая заказчиком, выбор нескольких значений"},
+      "characteristicChoiceType": {"id": 1, "name": "Единственный выбор"},
+      "characteristicValues": [
+        {"id": 5365521, "qualityDescription": "Планшетный"},
+        {"id": 5365522, "qualityDescription": "Протяжный"}
+      ]
+    },
+    {
+      "id": 889035,
+      "code": "bd89cf9f-6",
+      "name": "Совместимость",
+      "isRequired": false,
+      "characteristicKind": {"id": 3, "name": "Изменяемая заказчиком, выбор нескольких значений"},
+      "characteristicChoiceType": {"id": 1, "name": "Единственный выбор"},
+      "characteristicValues": [
+        {"id": 5365560, "qualityDescription": "Windows"},
+        {"id": 5365562, "qualityDescription": "Linux"},
+        {"id": 5365563, "qualityDescription": "MacOS"}
+      ]
+    },
+    {
+      "id": 889021,
+      "code": "01a79ac9-6",
+      "name": "Способ подключения",
+      "isRequired": true,
+      "characteristicKind": {"id": 3, "name": "Изменяемая заказчиком, выбор нескольких значений"},
+      "characteristicChoiceType": {"id": 1, "name": "Единственный выбор"},
+      "characteristicValues": [
+        {"id": 5365491, "qualityDescription": "Ethernet (RJ-45)"},
+        {"id": 5365492, "qualityDescription": "USB"}
+      ]
+    },
+    {
+      "id": 888995,
+      "code": "21804b9d-8",
+      "name": "Цветность печати",
+      "isRequired": true,
+      "characteristicKind": {"id": 1, "name": "Неизменяемая заказчиком"},
+      "characteristicChoiceType": {"id": 1, "name": "Единственный выбор"},
+      "characteristicValues": [
+        {"id": 5365356, "qualityDescription": "Цветная"},
+        {"id": 5365357, "qualityDescription": "Монохромная"}
+      ]
+    }
+  ]
+}

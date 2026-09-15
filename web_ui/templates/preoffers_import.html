@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Импорт из JSON RTS</h2>
+<p class="hint">
+  <a href="{{ request.url_for('page_preoffers') }}">← Справочник предложений</a>
+</p>
+
+<div class="card">
+  <h3>Загрузка реестра позиций</h3>
+  <ol class="hint registry-import-steps">
+    <li>Откройте <a href="https://offers.rts-tender.ru/supplier/price-lists/positions/registry" target="_blank" rel="noopener">реестр позиций RTS</a> под своей учётной записью.</li>
+    <li>В DevTools → Network найдите JSON-ответ списка позиций (объект с полем <code>page</code>).</li>
+    <li>Сохраните ответ в файл или скопируйте в поле ниже.</li>
+  </ol>
+  <p class="hint">
+    В подбор попадают только позиции со статусом <strong>Published</strong> (остальные импортируются выключенными, если снять фильтр).
+    Числовые диапазоны из RTS могут не совпасть дословно с формулировками в извещении ЕИС.
+  </p>
+
+  {% if import_flash_ok %}<div class="msg ok">{{ import_flash_ok }}</div>{% endif %}
+  {% if import_flash_err %}<div class="msg err">{{ import_flash_err }}</div>{% endif %}
+
+  <form method="post" action="{{ request.url_for('action_preoffers_registry_preview') }}" enctype="multipart/form-data" class="registry-import-form">
+    <label>
+      <span>JSON-файл</span>
+      <input type="file" name="registry_file" accept=".json,application/json">
+    </label>
+    <label class="registry-import-textarea">
+      <span>или вставьте JSON</span>
+      <textarea name="registry_json_text" rows="8" placeholder='{"page": [...], "total": ...}'></textarea>
+    </label>
+    <label class="registry-import-checkbox">
+      <input type="checkbox" name="only_published" value="1" checked>
+      <span>Только опубликованные (Published) — не включать в список импорта черновики и прочие статусы</span>
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Предпросмотр</button>
+    </div>
+  </form>
+</div>
+
+{% if preview_rows and preview_rows|length > 0 %}
+<div class="card">
+  <h3>Предпросмотр ({{ preview_rows|length }})</h3>
+  <table class="eis-table registry-import-preview-table">
+    <thead>
+      <tr>
+        <th>КТРУ</th>
+        <th>Название</th>
+        <th>Статус RTS</th>
+        <th>В подборе</th>
+        <th>Характеристик</th>
+        <th>RTS URL</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in preview_rows %}
+      <tr>
+        <td><code>{{ row.ktru_code }}</code></td>
+        <td>{{ row.title }}</td>
+        <td>{{ row.offer_status }}</td>
+        <td>{{ 'да' if row.enabled else 'нет' }}</td>
+        <td>{{ row.chars_count }}</td>
+        <td>
+          {% if row.rts_url %}
+            <a href="{{ row.rts_url }}" target="_blank" rel="noopener">id {{ row.source_position_id }}</a>
+          {% else %}—{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if filtered_unpublished and filtered_unpublished|length > 0 %}
+  <details class="registry-import-warnings">
+    <summary>Пропущено по фильтру Published ({{ filtered_unpublished|length }})</summary>
+    <ul class="hint">
+      {% for line in filtered_unpublished %}
+      <li>{{ line }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  {% if skipped and skipped|length > 0 %}
+  <details class="registry-import-warnings">
+    <summary>Не разобрано ({{ skipped|length }})</summary>
+    <ul class="hint">
+      {% for line in skipped %}
+      <li>{{ line }}</li>
+      {% endfor %}
+    </ul>
+  </details>
+  {% endif %}
+
+  {% if import_ready %}
+  <form method="post" action="{{ request.url_for('action_preoffers_registry_import') }}" class="registry-import-confirm">
+    <button type="submit">Импортировать в справочник</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

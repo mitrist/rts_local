@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Настройка уведомлений</h2>
+
+{% if flash_ok %}<div class="msg ok">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="msg err">{{ flash_err }}</div>{% endif %}
+
+<div class="card">
+  <h3>Фильтр по стоимости</h3>
+  <form method="post" action="{{ request.url_for('action_notification_settings_save') }}" class="preoffer-form">
+    <label>
+      <span>Стоимость закупки от, ₽</span>
+      <input
+        type="text"
+        name="min_purchase_amount"
+        value="{{ form.min_purchase_amount }}"
+        inputmode="decimal"
+        placeholder="например 100000"
+        autocomplete="off">
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

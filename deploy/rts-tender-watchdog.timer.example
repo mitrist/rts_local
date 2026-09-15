@@ -1,0 +1,16 @@
+# Запуск watchdog каждую минуту.
+#
+#   sudo systemctl enable --now rts-tender-watchdog.timer
+#   systemctl list-timers rts-tender-watchdog.timer
+
+[Unit]
+Description=Run RTS Tender health watchdog every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=15s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

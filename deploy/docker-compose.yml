@@ -1,0 +1,32 @@
+# Опциональный локальный запуск веб-консоли в Docker (без nginx).
+# Данные и секреты монтируются с хоста — не кладите cookies/env в образ.
+#
+#   cp deploy/service.env.example .env.docker
+#   # отредактируйте пути внутри контейнера (/data, /meta)
+#   docker compose -f deploy/docker-compose.yml up --build
+
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "8765:8765"
+    env_file:
+      - ../.env.docker
+    environment:
+      RTS_PROJECT_ROOT: /app
+      RTS_META_DIR: /meta
+      EIS_ANALYTICS_DB: /meta/eis_analytics.sqlite3
+      EIS_HISTORY_DB: /data/eis_history.sqlite3
+      RTS_PREOFFERS_FILE: /meta/rts_preoffers.json
+      EIS_ENV_FILE: /run/secrets/eis.env
+      RTS_WEB_USERS_FILE: /run/secrets/web_users.txt
+      RTS_WEB_HOST: 0.0.0.0
+      RTS_WEB_PORT: "8765"
+    volumes:
+      - ../data:/data
+      - ../.runtime_meta:/meta
+      - ../eis.env:/run/secrets/eis.env:ro
+      - ../web_users.txt:/run/secrets/web_users.txt:ro
+    restart: unless-stopped

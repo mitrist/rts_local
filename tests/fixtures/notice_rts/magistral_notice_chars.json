@@ -1,0 +1,16 @@
+[
+  {
+    "match_key": "f0d0406b-f",
+    "characteristic_kind": "reference",
+    "characteristic_code": "f0d0406b-f",
+    "display_label": "Длина трубки",
+    "value_display": "не менее 105 и не более 150 см"
+  },
+  {
+    "match_key": "004271bf-5",
+    "characteristic_kind": "reference",
+    "characteristic_code": "004271bf-5",
+    "display_label": "Вариант исполнения",
+    "value_display": "Прямая"
+  }
+]

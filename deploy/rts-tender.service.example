@@ -1,0 +1,26 @@
+# Пример unit для /etc/systemd/system/rts-tender.service
+[Unit]
+Description=RTS Tender web console
+After=network.target
+
+[Service]
+Type=simple
+User=mitrist12
+Group=mitrist12
+WorkingDirectory=/opt/rts_tender/app
+EnvironmentFile=/etc/rts-tender/service.env
+EnvironmentFile=-/etc/rts-tender/eis.env
+ExecStart=/opt/rts_tender/venv/bin/python -m web_ui
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGKILL
+
+[Install]
+WantedBy=multi-user.target
+
+# eis.env: sudo chown root:mitrist12 /etc/rts-tender/eis.env && sudo chmod 640
+#
+# Опрос реестра ПП (cron): deploy/rts-pp-monitor-poll.{service,timer}.example
+# Watchdog зависаний: deploy/rts-tender-watchdog.{service,timer}.example + deploy/HEALTH.md
+# RTS_PP_MONITOR=1 RTS_PP_MONITOR_CRON=1 RTS_PP_MONITOR_SUPERVISOR=0 RTS_PP_MONITOR_INTERVAL_SEC=420

@@ -1,0 +1,51 @@
+# Deploy rts_local to Yandex Cloud VM on push to main.
+# Secrets (Settings → Secrets and variables → Actions):
+#   VM_HOST     — публичный IP или DNS
+#   VM_USER     — SSH user (ubuntu / mitrist12)
+#   VM_SSH_KEY  — private key (полный PEM)
+# Optional repository Variables:
+#   VM_APP_PATH      — default /opt/rts_local/app
+#   VM_SERVICE_NAME  — default rts-local
+
+name: Deploy to Yandex VM
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-yandex-vm
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        env:
+          APP_PATH: ${{ vars.VM_APP_PATH }}
+          SERVICE_NAME: ${{ vars.VM_SERVICE_NAME }}
+        with:
+          host: ${{ secrets.VM_HOST }}
+          username: ${{ secrets.VM_USER }}
+          key: ${{ secrets.VM_SSH_KEY }}
+          envs: APP_PATH,SERVICE_NAME
+          script_stop: true
+          script: |
+            set -euo pipefail
+            APP_PATH="${APP_PATH:-/opt/rts_local/app}"
+            SERVICE="${SERVICE_NAME:-rts-local}"
+            VENV="$(dirname "$APP_PATH")/venv"
+            cd "$APP_PATH"
+            git fetch origin main
+            git reset --hard origin/main
+            git log -1 --oneline
+            if [[ -x "$VENV/bin/pip" ]]; then
+              "$VENV/bin/pip" install -q -r requirements.txt
+            fi
+            sudo systemctl restart "$SERVICE"
+            sudo systemctl is-active "$SERVICE"
+            curl -sf -o /dev/null -w "health %{http_code}\n" http://127.0.0.1:8765/health/live || true

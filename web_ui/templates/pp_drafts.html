@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Черновики ПП</h2>
+<p class="hint">
+  Черновики из подбора предложений («Участвовать») и из образцов ПП конкурентов («Создать черновик»).
+  Статусы из ЛК РТС подгружаются только при <code>RTS_PP_DRAFTS_ENRICH_RTS=1</code> в env сервера.
+  Открывайте позиции по прямым ссылкам в колонке «РТС».
+</p>
+
+{% if cookie_meta.admin_view %}
+  <div class="hint">Режим администратора: показаны черновики операторов {{ cookie_meta.view_profiles | join(', ') }}.</div>
+{% endif %}
+{% if cookie_meta.cookie_ok %}
+  <div class="msg ok">Сессия РТС доступна — статусы обновлены из API.</div>
+{% elif cookie_meta.cookie_message %}
+  <div class="msg err">{{ cookie_meta.cookie_message }}</div>
+{% endif %}
+
+<div class="card">
+  <h3>Наши черновики ({{ pagination.total_rows if pagination else drafts|length }})</h3>
+  {% if pagination and pagination.total_rows > 0 %}
+  <div class="offer-pagination">
+    <span class="hint">Показаны строки {{ pagination.first_row }}–{{ pagination.last_row }} из {{ pagination.total_rows }} · страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_drafts') }}?page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% else %}
+      <span class="button secondary disabled">← Предыдущая</span>
+      {% endif %}
+      {% if pagination.has_next %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_drafts') }}?page={{ pagination.next_page }}">Следующая →</a>
+      {% else %}
+      <span class="button secondary disabled">Следующая →</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% if drafts and drafts|length > 0 %}
+  <table class="eis-table pp-drafts-table">
+    <thead>
+      <tr>
+        <th>Создан (МСК)</th>
+        <th>Время добавления</th>
+        {% if admin_drafts_view %}<th>Оператор</th>{% endif %}
+        <th>Источник</th>
+        <th>КТРУ</th>
+        <th>Наименование</th>
+        <th>ID черновика</th>
+        <th>Статус</th>
+        <th>Заполнение</th>
+        <th>РТС</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in drafts %}
+      <tr class="{{ 'pp-draft-error-row' if row.status == 'error' else '' }}">
+        <td class="pp-draft-date">{{ row.created_display_msk or '—' }}</td>
+        <td class="pp-draft-date">{{ row.source_added_display_msk or '—' }}</td>
+        {% if admin_drafts_view %}
+        <td><code>{{ row.rts_profile or '—' }}</code></td>
+        {% endif %}
+        <td>
+          {% if row.draft_source == 'monitor' and row.offer_price_list_item_id %}
+            <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=row.offer_price_list_item_id) }}">Образец конкурента</a>
+            <div class="hint"><code>{{ row.offer_price_list_item_id }}</code></div>
+          {% else %}
+            <span>Извещение</span>
+            <div class="hint"><code>{{ row.purchase_number or '—' }}</code></div>
+          {% endif %}
+        </td>
+        <td><code>{{ row.ktru_code or '—' }}</code></td>
+        <td>{{ row.item_name or '—' }}</td>
+        <td>
+          {% if row.rts_draft_id %}
+            <code>{{ row.rts_draft_id }}</code>
+            {% if row.price_list_item_id %}
+              <div class="hint">pli {{ row.price_list_item_id }}</div>
+            {% endif %}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          <span class="pp-draft-status pp-draft-status-{{ row.status }}">{{ row.status }}</span>
+          {% if row.rts_status and row.rts_status != row.status %}
+            <div class="hint">РТС: {{ row.rts_status }}</div>
+          {% endif %}
+          {% if row.error_text %}
+            <div class="hint pp-draft-error-text">{{ row.error_text }}</div>
+          {% endif %}
+        </td>
+        <td>
+          {% if row.fill_summary %}
+            <span>{{ row.fill_summary }}</span>
+            {% for w in row.fill_warnings %}
+              <div class="hint pp-draft-fill-warn">{{ w }}</div>
+            {% endfor %}
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td>
+          {% if row.rts_live_ok %}
+            <span class="hint">OK</span>
+          {% elif row.rts_draft_id %}
+            <span class="hint">нет данных</span>
+          {% else %}
+            —
+          {% endif %}
+        </td>
+        <td class="pp-draft-actions">
+          {% if row.edit_url %}
+            <a href="{{ row.edit_url }}" target="_blank" rel="noopener" class="button secondary">Открыть в РТС</a>
+          {% endif %}
+          <button type="button" class="button danger pp-draft-delete-btn"
+                  data-purchase-number="{{ row.purchase_number }}"
+                  data-line-key="{{ row.line_key }}"
+                  data-rts-profile="{{ row.rts_profile or '' }}">Удалить ПП</button>
+          {% if row.rts_draft_id and not row.protected_id %}
+            <span class="hint">id {{ row.rts_draft_id }} — откройте из списка черновиков</span>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pagination and pagination.total_pages > 1 %}
+  <div class="offer-pagination offer-pagination-bottom">
+    <span class="hint">Страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_drafts') }}?page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% endif %}
+      {% if pagination.has_next %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_drafts') }}?page={{ pagination.next_page }}">Следующая →</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% else %}
+  <p class="hint">Пока нет записей. Создайте черновик через «Участвовать» в подборе предложений или «Создать черновик» на странице образца ПП конкурента.</p>
+  {% endif %}
+</div>
+
+<script>
+(function () {
+  document.querySelectorAll(".pp-draft-delete-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pn = btn.getAttribute("data-purchase-number") || "";
+      var lk = btn.getAttribute("data-line-key") || "";
+      var profile = btn.getAttribute("data-rts-profile") || "";
+      if (!pn || !lk) return;
+      var msg = "Удалить запись черновика в нашем сервисе?\n\n"
+        + "Черновик в ЛК РТС нужно удалить отдельно (если ещё не удалили). "
+        + "После этого можно снова нажать «Участвовать».";
+      if (!window.confirm(msg)) return;
+      btn.disabled = true;
+      fetch("/api/rts/pp/drafts/delete", {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ purchase_number: pn, line_key: lk, rts_profile: profile })
+      })
+        .then(function (resp) {
+          return resp.json().then(function (data) {
+            if (!resp.ok) {
+              var detail = data && data.detail ? data.detail : ("HTTP " + resp.status);
+              throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+            }
+            return data;
+          });
+        })
+        .then(function () { window.location.reload(); })
+        .catch(function (err) {
+          btn.disabled = false;
+          window.alert("Не удалось удалить: " + err.message);
+        });
+    });
+  });
+})();
+</script>
+{% endblock %}

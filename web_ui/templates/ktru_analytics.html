@@ -1,0 +1,422 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Аналитика КТРУ</h2>
+<p class="hint">Данные из исторического XML-backfill ЕИС (<code>epNotificationEZT2020</code>, ч. 12 ст. 93).</p>
+
+<div class="card analytics-v2-filters-card">
+  <form method="get" action="{{ request.url_for('page_ktru_analytics') }}" class="analytics-v2-filters">
+    <input type="hidden" name="tab" value="{{ active_tab }}">
+    <label>
+      <span>Дата с</span>
+      <input type="date" name="date_from" value="{{ period_from.isoformat() }}">
+    </label>
+    <label>
+      <span>Дата по</span>
+      <input type="date" name="date_to" value="{{ period_to.isoformat() }}">
+    </label>
+    <label>
+      <span>Поиск КТРУ / наименование</span>
+      <input type="text" name="q" value="{{ ktru_query }}" placeholder="31.01.11.150 или стул">
+    </label>
+    {% if selected_ktru %}
+      <input type="hidden" name="ktru" value="{{ selected_ktru }}">
+    {% endif %}
+    <div class="eis-submit-row">
+      <button type="submit">Применить</button>
+      <a class="button secondary" href="{{ request.url_for('page_ktru_analytics') }}?tab={{ active_tab }}">Сбросить</a>
+      {% if history_coverage %}
+      <a class="button secondary"
+         href="{{ request.url_for('page_ktru_analytics') }}?date_from={{ history_coverage[0].isoformat() }}&date_to={{ history_coverage[1].isoformat() }}&tab={{ active_tab }}{% if ktru_query %}&q={{ ktru_query|urlencode }}{% endif %}{% if selected_ktru %}&ktru={{ selected_ktru|urlencode }}{% endif %}">
+        Вся история
+      </a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<nav class="analytics-v2-tabs" aria-label="Разделы аналитики">
+  <a class="analytics-v2-tab{% if active_tab == 'summary' %} is-active{% endif %}"
+     href="{{ request.url_for('page_ktru_analytics') }}?date_from={{ period_from.isoformat() }}&date_to={{ period_to.isoformat() }}&tab=summary{% if ktru_query %}&q={{ ktru_query|urlencode }}{% endif %}{% if selected_ktru %}&ktru={{ selected_ktru|urlencode }}{% endif %}">
+    Сводка
+  </a>
+  <a class="analytics-v2-tab{% if active_tab == 'analysis' %} is-active{% endif %}"
+     href="{{ request.url_for('page_ktru_analytics') }}?date_from={{ period_from.isoformat() }}&date_to={{ period_to.isoformat() }}&tab=analysis{% if ktru_query %}&q={{ ktru_query|urlencode }}{% endif %}{% if selected_ktru %}&ktru={{ selected_ktru|urlencode }}{% endif %}">
+    Анализ
+  </a>
+</nav>
+
+{% if active_tab == 'summary' %}
+  {% if dashboard and dashboard.db_exists %}
+    {% set dkpi = dashboard.kpi %}
+    <div class="analytics-dashboard-layout">
+      <aside class="analytics-dashboard-kpi-stack">
+        <div class="analytics-dashboard-kpi-item">
+          <div class="analytics-v2-kpi-label">Регионов</div>
+          <div class="analytics-v2-kpi-value">{{ dkpi.region_count or 0 }}</div>
+        </div>
+        <div class="analytics-dashboard-kpi-item">
+          <div class="analytics-v2-kpi-label">Закупок</div>
+          <div class="analytics-v2-kpi-value">{{ dkpi.total_purchases or 0 }}</div>
+        </div>
+        <div class="analytics-dashboard-kpi-item">
+          <div class="analytics-v2-kpi-label">Сумма</div>
+          <div class="analytics-v2-kpi-value">{{ dkpi.total_sum_display }}</div>
+        </div>
+        <div class="analytics-dashboard-kpi-item">
+          <div class="analytics-v2-kpi-label">Заказчиков</div>
+          <div class="analytics-v2-kpi-value">{{ dkpi.customer_count or 0 }}</div>
+        </div>
+        <div class="analytics-dashboard-kpi-item">
+          <div class="analytics-v2-kpi-label">Среднее на закупку</div>
+          <div class="analytics-v2-kpi-value">{{ dkpi.avg_per_purchase_display }}</div>
+        </div>
+        <div class="analytics-dashboard-kpi-item">
+          <div class="analytics-v2-kpi-label">Уникальных КТРУ</div>
+          <div class="analytics-v2-kpi-value">{{ dkpi.unique_ktru_count or 0 }}</div>
+        </div>
+      </aside>
+
+      <div class="analytics-dashboard-main">
+        {% if dashboard.single_ktru %}
+        {% set sk = dashboard.single_ktru %}
+        <div class="card analytics-dashboard-single-ktru">
+          <h3><code>{{ sk.ktru_code }}</code></h3>
+          <p class="hint">{{ sk.position_display_name or '—' }}</p>
+          <p class="hint">
+            Закупок: {{ sk.purchase_count }}
+            · Сумма: {{ sk.total_sum_display }}
+            · Среднее на закупку: {{ sk.avg_per_purchase_display }}
+          </p>
+          <a class="button secondary"
+             href="{{ request.url_for('page_ktru_analytics') }}?date_from={{ period_from.isoformat() }}&date_to={{ period_to.isoformat() }}&tab=analysis&ktru={{ sk.ktru_code|urlencode }}{% if ktru_query %}&q={{ ktru_query|urlencode }}{% endif %}">
+            Подробный анализ
+          </a>
+        </div>
+        {% elif dashboard.ktru_table and dashboard.ktru_table|length > 0 %}
+        <div class="card analytics-dashboard-table-card">
+          <h3>КТРУ за {{ dashboard.period_label }}</h3>
+          <div class="analytics-dashboard-table-wrap">
+            <table class="eis-table analytics-dashboard-table">
+              <thead>
+                <tr>
+                  <th>КТРУ</th>
+                  <th>Наименование</th>
+                  <th class="num">Закупок</th>
+                  <th class="num">Среднее на закупку</th>
+                  <th class="num">Сумма</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {% for row in dashboard.ktru_table %}
+                <tr>
+                  <td><code>{{ row.ktru_code }}</code></td>
+                  <td>{{ row.position_display_name or '—' }}</td>
+                  <td class="num">{{ row.purchase_count }}</td>
+                  <td class="num">{{ row.avg_per_purchase_display }}</td>
+                  <td class="num">{{ row.total_sum_display }}</td>
+                  <td>
+                    <a class="button secondary"
+                       href="{{ request.url_for('page_ktru_analytics') }}?date_from={{ period_from.isoformat() }}&date_to={{ period_to.isoformat() }}&tab=analysis&ktru={{ row.ktru_code|urlencode }}{% if ktru_query %}&q={{ ktru_query|urlencode }}{% endif %}">
+                      Анализ
+                    </a>
+                  </td>
+                </tr>
+                {% endfor %}
+              </tbody>
+              {% set tot = dashboard.ktru_table_totals %}
+              <tfoot>
+                <tr class="analytics-dashboard-table-total">
+                  <th colspan="2">Итого</th>
+                  <th class="num">{{ tot.purchase_count }}</th>
+                  <th class="num">{{ tot.avg_per_purchase_display }}</th>
+                  <th class="num">{{ tot.total_sum_display }}</th>
+                  <th></th>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </div>
+        {% else %}
+        <div class="card">
+          <p class="hint">За выбранный период нет данных в eis_history.</p>
+        </div>
+        {% endif %}
+
+        <div class="card analytics-dashboard-chart-card">
+          <h3>Закупки по месяцам</h3>
+          <div class="analytics-dashboard-chart-wrap">
+            <canvas id="purchases-by-month" aria-label="График закупок по месяцам"></canvas>
+            <p id="purchases-by-month-empty" class="hint analytics-dashboard-chart-empty" hidden>Нет данных за период.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script type="application/json" id="purchases-by-month-data">{{ dashboard.purchases_by_month | tojson }}</script>
+  {% else %}
+    <div class="card">
+      <p class="hint">База <code>eis_history.sqlite3</code> ещё не создана. Запустите исторический backfill (см. README).</p>
+    </div>
+  {% endif %}
+
+{% elif active_tab == 'analysis' %}
+  {% if analytics and analytics.db_exists %}
+  {% set kpi = analytics.kpi %}
+  <div class="analytics-v2-kpi-grid">
+    <div class="analytics-v2-kpi-card">
+      <div class="analytics-v2-kpi-label">Закупок в периоде</div>
+      <div class="analytics-v2-kpi-value">{{ kpi.total_purchases or 0 }}</div>
+    </div>
+    <div class="analytics-v2-kpi-card">
+      <div class="analytics-v2-kpi-label">Уникальных КТРУ</div>
+      <div class="analytics-v2-kpi-value">{{ kpi.total_ktru_codes or 0 }}</div>
+    </div>
+    <div class="analytics-v2-kpi-card">
+      <div class="analytics-v2-kpi-label">{% if selected_ktru %}Выбранное КТРУ{% else %}Топ КТРУ{% endif %}</div>
+      <div class="analytics-v2-kpi-value">
+        {% if kpi.top_ktru_code %}<code>{{ kpi.top_ktru_code }}</code>{% else %}—{% endif %}
+      </div>
+      <div class="hint">
+        {% if kpi.top_ktru_purchase_share_pct is not none %}{{ kpi.top_ktru_purchase_share_pct }}% закупок{% else %}—{% endif %}
+      </div>
+    </div>
+  </div>
+
+  {% if analytics.selected_detail %}
+  {% set detail = analytics.selected_detail %}
+  {% set matrix = detail.purchase_matrix %}
+
+  <div class="card analytics-v2-context">
+    <h3><code>{{ detail.ktru_code }}</code></h3>
+    <p class="hint">
+      {{ detail.position_display_name or '—' }}
+      · закупок: {{ detail.purchase_count }}
+      {% if detail.purchase_share_pct is not none %}({{ detail.purchase_share_pct }}% от всех закупок в периоде){% endif %}
+      · уникальных наборов: {{ detail.characteristic_sets }}
+      {% if detail.purchase_count < 3 %}<span class="analytics-v2-warn">· мало данных для уверенного вывода</span>{% endif %}
+    </p>
+  </div>
+
+  <div class="card analytics-v2-profile-card">
+    <h3>Типовой профиль</h3>
+    {% if detail.typical_profile and detail.typical_profile|length > 0 %}
+    <ul class="analytics-v2-profile-list">
+      {% for row in detail.typical_profile %}
+      <li>
+        <span class="analytics-v2-profile-signal {{ 'analytics-v2-profile-signal--up' if row.has_consensus else 'analytics-v2-profile-signal--down' }}"
+              aria-hidden="true"
+              title="{{ 'Есть консенсус по значению' if row.has_consensus else 'Нет консенсуса по значению' }}"></span>
+        <span class="analytics-v2-profile-key">{{ row.char_key_display }}</span>
+        <span class="analytics-v2-profile-value">{{ row.value_display or '—' }}</span>
+        <span class="analytics-v2-profile-meta hint">
+          {% if row.value_share_within_char_pct is not none %}{{ row.value_share_within_char_pct }}%{% endif %}
+          {% if row.purchase_share_within_ktru_pct is not none %} · в {{ row.purchase_share_within_ktru_pct }}% закупок{% endif %}
+        </span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <p class="hint">Нет параметров с заполненными значениями для этого КТРУ.</p>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <h3>Частота по параметрам</h3>
+    <p class="hint">Доля закупок с каждым значением (среди тех, где параметр указан).</p>
+    {% if detail.top_characteristic_values and detail.top_characteristic_values|length > 0 %}
+    <div class="analytics-v2-bars">
+      {% for ch in detail.top_characteristic_values %}
+      <div class="analytics-v2-bar-block">
+        <div class="analytics-v2-bar-title">
+          {{ ch.char_key_display }}
+          <span class="hint">({{ ch.purchase_count }} закупок{% if ch.purchase_share_within_ktru_pct is not none %}, {{ ch.purchase_share_within_ktru_pct }}% всех{% endif %})</span>
+        </div>
+        {% for val in ch.top_values %}
+        <div class="analytics-v2-bar-row">
+          <span class="analytics-v2-bar-label">{{ val.value_display }}</span>
+          <div class="analytics-v2-bar-track">
+            <div class="analytics-v2-bar-fill" style="width: {{ val.value_share_within_char_pct or 0 }}%"></div>
+          </div>
+          <span class="analytics-v2-bar-pct hint">{% if val.value_share_within_char_pct is not none %}{{ val.value_share_within_char_pct }}%{% else %}—{% endif %}</span>
+        </div>
+        {% endfor %}
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="hint">Нет данных по отдельным параметрам.</p>
+    {% endif %}
+  </div>
+
+  <details class="card analytics-collapsible analytics-v2-compare">
+    <summary>Сравнить закупки (матрица)</summary>
+    <p class="hint">Столбцы по схожести; одинаковые наборы схлопнуты (×N у заголовка).</p>
+    {% if matrix and matrix.columns and matrix.columns|length > 0 %}
+    <div class="analytics-v2-matrix-wrap" data-analytics-v2-matrix>
+      <div class="analytics-v2-matrix-scroll-top" aria-label="Горизонтальная прокрутка таблицы">
+        <div class="analytics-v2-matrix-scroll-top-inner"></div>
+      </div>
+      <div class="analytics-v2-matrix-scroll">
+        <table class="eis-table analytics-v2-matrix-table">
+          <thead>
+            <tr>
+              <th class="analytics-v2-matrix-sticky-col">Характеристика</th>
+              {% for col in matrix.columns %}
+              <th class="analytics-v2-matrix-col"
+                  title="{% if col.collapsed_count > 1 %}Закупки ({{ col.collapsed_count }}): {{ col.purchase_numbers|join(', ') }}{% else %}Закупка {{ col.purchase_number }}{% endif %}">
+                №{{ col.ordinal }}{% if col.collapsed_count > 1 %}<span class="analytics-v2-matrix-col-count">×{{ col.collapsed_count }}</span>{% endif %}
+              </th>
+              {% endfor %}
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in matrix.characteristics %}
+            <tr>
+              <th class="analytics-v2-matrix-sticky-col" scope="row" title="{{ row.char_key }}">
+                {{ row.char_key_display }}
+              </th>
+              {% for cell in row.cells %}
+              <td class="analytics-v2-matrix-col">{{ cell }}</td>
+              {% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    {% if matrix.truncated %}
+    <p class="hint">Показано {{ matrix.purchases_shown }} из {{ matrix.purchase_count }} закупок (до {{ matrix.max_columns }} уникальных наборов).</p>
+    {% endif %}
+    {% else %}
+    <p class="hint">Нет закупок для матрицы.</p>
+    {% endif %}
+  </details>
+  {% endif %}
+
+  <details class="card analytics-collapsible analytics-v2-top-ktru">
+    <summary>Топ КТРУ за {{ analytics.period_label }}{% if analytics.top_ktru %} ({{ analytics.top_ktru|length }}){% endif %}</summary>
+    {% if analytics.top_ktru and analytics.top_ktru|length > 0 %}
+    <table class="eis-table analytics-v2-table">
+      <thead>
+        <tr>
+          <th>КТРУ</th>
+          <th>Наименование</th>
+          <th>Закупок</th>
+          <th>Строк</th>
+          <th>Наборов</th>
+          <th>Доля закупок</th>
+          <th>Последнее</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in analytics.top_ktru %}
+        <tr class="{{ 'analytics-v2-row-selected' if row.ktru_code == selected_ktru else '' }}">
+          <td><code>{{ row.ktru_code }}</code></td>
+          <td>{{ row.position_display_name or '—' }}</td>
+          <td>{{ row.purchase_count }}</td>
+          <td>{{ row.line_count }}</td>
+          <td>{{ row.characteristic_sets }}</td>
+          <td>{% if row.purchase_share_pct is not none %}{{ row.purchase_share_pct }}%{% else %}—{% endif %}</td>
+          <td>{{ row.last_seen_display_msk or '—' }}</td>
+          <td>
+            <a class="button secondary"
+               href="{{ request.url_for('page_ktru_analytics') }}?date_from={{ period_from.isoformat() }}&date_to={{ period_to.isoformat() }}&tab=analysis{% if ktru_query %}&q={{ ktru_query|urlencode }}{% endif %}&ktru={{ row.ktru_code|urlencode }}">
+              Анализ
+            </a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="hint">За выбранный период нет данных в eis_history. Выполните <code>python -m eis_history_backfill</code>.</p>
+    {% endif %}
+  </details>
+  {% else %}
+    <div class="card">
+      <p class="hint">База <code>eis_history.sqlite3</code> ещё не создана. Запустите исторический backfill (см. README).</p>
+    </div>
+  {% endif %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if active_tab == 'summary' and dashboard and dashboard.db_exists %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script>
+  (function () {
+    var dataEl = document.getElementById("purchases-by-month-data");
+    var canvas = document.getElementById("purchases-by-month");
+    var emptyEl = document.getElementById("purchases-by-month-empty");
+    if (!dataEl || !canvas || typeof Chart === "undefined") return;
+    var months = [];
+    try {
+      months = JSON.parse(dataEl.textContent || "[]");
+    } catch (e) {
+      months = [];
+    }
+    if (!months.length) {
+      canvas.hidden = true;
+      if (emptyEl) emptyEl.hidden = false;
+      return;
+    }
+    var labels = months.map(function (m) { return m.month_label || m.month; });
+    var values = months.map(function (m) { return m.purchase_count || 0; });
+    new Chart(canvas, {
+      type: "bar",
+      data: {
+        labels: labels,
+        datasets: [{
+          label: "Закупок",
+          data: values,
+          backgroundColor: "rgba(76, 175, 110, 0.55)",
+          borderColor: "rgba(76, 175, 110, 0.9)",
+          borderWidth: 1
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { beginAtZero: true, ticks: { precision: 0 } }
+        }
+      }
+    });
+  })();
+</script>
+{% endif %}
+{% if active_tab == 'analysis' %}
+<script>
+  (function () {
+    var wrap = document.querySelector("[data-analytics-v2-matrix]");
+    if (!wrap) return;
+    var top = wrap.querySelector(".analytics-v2-matrix-scroll-top");
+    var body = wrap.querySelector(".analytics-v2-matrix-scroll");
+    var inner = wrap.querySelector(".analytics-v2-matrix-scroll-top-inner");
+    var table = wrap.querySelector(".analytics-v2-matrix-table");
+    if (!top || !body || !inner || !table) return;
+
+    function syncWidth() {
+      inner.style.width = table.scrollWidth + "px";
+      inner.style.height = "1px";
+    }
+    function linkScroll(source, target) {
+      source.addEventListener("scroll", function () {
+        if (target.scrollLeft !== source.scrollLeft) {
+          target.scrollLeft = source.scrollLeft;
+        }
+      });
+    }
+    syncWidth();
+    linkScroll(top, body);
+    linkScroll(body, top);
+    window.addEventListener("resize", syncWidth);
+    if (typeof ResizeObserver !== "undefined") {
+      new ResizeObserver(syncWidth).observe(table);
+    }
+  })();
+</script>
+{% endif %}
+{% endblock %}

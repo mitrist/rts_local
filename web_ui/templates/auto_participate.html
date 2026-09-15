@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Авто-участие</h2>
+
+{% if flash_ok %}<div class="msg ok">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="msg err">{{ flash_err }}</div>{% endif %}
+
+{% if not env_auto_participate_enabled %}
+<div class="msg err">Автоучастие выключено на сервере (<code>RTS_AUTO_PARTICIPATE</code> ≠ 1). Правила сохраняются, но черновики не создаются.</div>
+{% elif not global_enabled %}
+<div class="msg err">Автоучастие выключено в админке для всех профилей. Включите в разделе «Настройка автоучастия».</div>
+{% endif %}
+
+<div class="card">
+  <h3>Профиль</h3>
+  <p class="hint">
+    {% for p in profiles %}
+      {% if p == selected_profile %}
+        <strong>{{ p }}</strong>
+      {% else %}
+        <a href="{{ request.url_for('page_auto_participate') }}?profile={{ p }}">{{ p }}</a>
+      {% endif %}
+      {% if not loop.last %} · {% endif %}
+    {% endfor %}
+  </p>
+</div>
+
+<div class="card">
+  <h3>Cookie профиля {{ selected_profile }}</h3>
+  {% if cookie_status.file_exists %}
+  <p class="hint">
+    Файл: <code>{{ paths.cookie }}</code>,
+    {{ cookie_status.cookie_chars }} символов.
+    {% if cookie_status.probe_ok is sameas true %} — сессия OK{% elif cookie_status.probe_ok is sameas false %} — проверка не прошла{% endif %}
+  </p>
+  {% else %}
+  <p class="msg err">Cookie не сохранён — оператор {{ selected_profile }} должен обновить сессию.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Правила — {{ selected_profile }}</h3>
+  <form method="post" action="{{ request.url_for('action_auto_participate_save') }}" class="preoffer-form">
+    <input type="hidden" name="profile" value="{{ selected_profile }}">
+    <label class="checkbox-row">
+      <input type="checkbox" name="enabled" value="1" {% if form.enabled %}checked{% endif %}>
+      <span>Включено для этого профиля</span>
+    </label>
+    <label>
+      <span>Сумма позиции от, ₽</span>
+      <input type="text" name="min_purchase_amount" value="{{ form.min_purchase_amount }}" inputmode="decimal" placeholder="200000" autocomplete="off" required>
+    </label>
+    <label>
+      <span>Режим КТРУ</span>
+      <select name="ktru_mode">
+        <option value="catalog" {% if form.ktru_mode == 'catalog' %}selected{% endif %}>Из справочника предложений</option>
+        <option value="whitelist" {% if form.ktru_mode == 'whitelist' %}selected{% endif %}>Только список ниже</option>
+      </select>
+    </label>
+    <label>
+      <span>Коды КТРУ (по строке, для whitelist)</span>
+      <textarea name="ktru_codes_text" rows="6" spellcheck="false" placeholder="08.12.12.140-00000005">{{ form.ktru_codes_text }}</textarea>
+    </label>
+    <label>
+      <span>Мин. совпадение характеристик, %</span>
+      <input type="text" name="min_match_ratio" value="{{ form.min_match_ratio }}" inputmode="decimal" placeholder="0" autocomplete="off">
+    </label>
+    <label>
+      <span>Макс. черновиков в час</span>
+      <input type="number" name="max_per_hour" value="{{ form.max_per_hour }}" min="1" max="100">
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Последние попытки ({{ selected_profile }})</h3>
+  {% if attempts and attempts|length > 0 %}
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>Время (UTC)</th>
+        <th>Закупка</th>
+        <th>КТРУ</th>
+        <th>Результат</th>
+        <th>Причина / черновик</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in attempts %}
+      <tr>
+        <td>{{ row.created_at_utc or '—' }}</td>
+        <td><code>{{ row.purchase_number }}</code></td>
+        <td><code>{{ row.ktru_code or '—' }}</code></td>
+        <td>
+          {% if row.status == 'created' %}Создан
+          {% elif row.status == 'cookie_expired' %}Cookie
+          {% elif row.status == 'skipped' %}Пропуск
+          {% elif row.status == 'error' %}Ошибка
+          {% else %}{{ row.status }}{% endif %}
+        </td>
+        <td>
+          {% if row.status == 'created' and row.edit_url %}
+            <a href="{{ row.edit_url }}" target="_blank" rel="noopener">{{ row.rts_draft_id or 'РТС' }}</a>
+          {% elif row.status == 'created' and row.rts_draft_id %}
+            <code>{{ row.rts_draft_id }}</code>
+          {% else %}
+            {{ row.error_text or '—' }}
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Попыток пока нет.</p>
+  {% endif %}
+</div>
+{% endblock %}

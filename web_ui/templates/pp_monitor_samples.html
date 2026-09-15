@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% macro registry_row(row, row_role, stack_id, member_count) %}
+<tr class="{% if row.is_pp_winner %}pp-registry-winner{% endif %}{% if row_role == 'parent' and member_count > 1 %} pp-stack-parent{% endif %}{% if row_role == 'child' %} pp-stack-child pp-stack-child--collapsed{% endif %}{% if row.is_our_pp %} pp-stack-our{% endif %}"
+    {% if stack_id and row_role == 'child' %}data-stack-id="{{ stack_id }}"{% endif %}
+    {% if stack_id and row_role == 'parent' and member_count > 1 %}data-stack-id="{{ stack_id }}"{% endif %}>
+  <td class="pp-draft-date">{{ row.service_draft_created_display_msk or '—' }}</td>
+  <td>{{ row.link_date_display_msk or '—' }}</td>
+  <td><code>{{ row.ktru_code or '—' }}</code></td>
+  <td class="pp-registry-name-cell">
+    {% if row.has_service_draft %}
+    <a href="{{ request.url_for('page_pp_drafts') }}" class="pp-registry-draft-dot" title="Черновик создан в сервисе (есть в «Черновики ПП»)" aria-label="Черновик создан"></a>
+    {% endif %}
+    {% if row_role == 'parent' and member_count > 1 %}
+    <button type="button" class="pp-stack-toggle link-button" data-stack-id="{{ stack_id }}" data-member-count="{{ member_count }}" aria-expanded="false" title="Показать копии с тем же набором характеристик">▸ {{ member_count }} версий</button>
+    <span class="pp-stack-badge pp-stack-badge--primary">первичное</span>
+    {% elif row_role == 'child' %}
+    <span class="pp-stack-child-marker" aria-hidden="true">└</span>
+    <span class="pp-stack-badge pp-stack-badge--copy">копия</span>
+    {% endif %}
+    {% if row.is_our_pp %}<span class="pp-stack-badge pp-stack-badge--our">наше</span>{% endif %}
+    {% if row.is_pp_winner %}<span class="pp-stack-badge pp-stack-badge--winner">победитель</span>{% endif %}
+    {{ row.name or '—' }}
+  </td>
+  <td>{{ row.trade_mark or '—' }}</td>
+  <td>{{ row.validity_display_msk or '—' }}</td>
+  <td>{% if row.unit_price is not none %}{{ row.unit_price }}{% else %}—{% endif %}</td>
+  <td>{% if row.delivery_regions_count is not none %}{{ row.delivery_regions_count }}{% else %}—{% endif %}</td>
+  <td>
+    {% if row.has_find %}
+    <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=row.offer_price_list_item_id) }}" title="Карточка загружена">✓</a>
+    {% else %}
+    <form method="post" action="{{ request.url_for('action_rts_pp_monitor_fetch_find') }}" class="eis-inline-form">
+      <input type="hidden" name="offer_id" value="{{ row.offer_price_list_item_id }}">
+      <input type="hidden" name="return_to" value="registry">
+      <input type="hidden" name="return_ktru" value="{{ ktru_filter }}">
+      {% for selected_name in name_filters %}
+      <input type="hidden" name="return_name" value="{{ selected_name }}">
+      {% endfor %}
+      {% if legacy_name_query and not name_filters %}
+      <input type="hidden" name="return_q" value="{{ legacy_name_query }}">
+      {% endif %}
+      <input type="hidden" name="return_price_min" value="{{ price_min_filter }}">
+      <input type="hidden" name="return_price_max" value="{{ price_max_filter }}">
+      <input type="hidden" name="return_page" value="{{ pagination.page }}">
+      <input type="hidden" name="return_sort" value="{{ registry_sort }}">
+      <input type="hidden" name="return_dir" value="{{ registry_sort_dir }}">
+      {% if registry_grouped %}<input type="hidden" name="return_group" value="1">{% endif %}
+      <button type="submit" class="link-button">Загрузить</button>
+    </form>
+    {% endif %}
+  </td>
+  <td class="pp-sample-actions">
+    {% if row.has_find %}
+    <a class="pp-sample-badge pp-sample-badge--console"
+       href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=row.offer_price_list_item_id) }}"
+       title="Черновик поставщика (ID {{ row.offer_price_list_item_id }})">Черновик поставщика</a>
+    {% endif %}
+    {% if row.card_url %}
+    <a class="pp-sample-badge pp-sample-badge--rts"
+       href="{{ row.card_url }}" target="_blank" rel="noopener"
+       title="Карточка на offers.rts-tender.ru">РТС</a>
+    {% endif %}
+    {% if settings_admin and stack_id and row_role == 'parent' and member_count > 1 %}
+    <a class="pp-sample-badge pp-sample-badge--chain"
+       href="{{ request.url_for('page_pp_monitor_chain_detail', stack_key=stack_id) }}"
+       title="Цепочка ПП">Цепочка</a>
+    {% endif %}
+  </td>
+</tr>
+{% endmacro %}
+{% block content %}
+<h2>Реестр предложений</h2>
+<p class="hint">
+  Предварительные предложения конкурентов из реестра монитора ПП (customer API <code>search</code>).
+  {% if registry_grouped %}Показаны стопки с одинаковым набором характеристик КТРУ (без учёта регионов поставки).{% endif %}
+  Зелёный кружок у наименования — по предложению создан черновик в сервисе (есть в «Черновики ПП»).
+  Бледно-зелёная строка — ПП победило в процедуре (автосопоставление по цене победителя ЕИС, ручная exact-связь или confirmed).
+</p>
+
+{% if flash_ok %}<p class="flash ok">{{ flash_ok }}</p>{% endif %}
+{% if flash_err %}<p class="flash err">{{ flash_err }}</p>{% endif %}
+
+<form method="get" action="{{ request.url_for('page_pp_monitor_samples') }}" class="offer-filter-form pp-registry-filter-form">
+  <div class="offer-filter-row">
+    <label for="registry-ktru-filter">КТРУ</label>
+    <select name="ktru" id="registry-ktru-filter">
+      <option value=""{% if not ktru_filter %} selected{% endif %}>Все КТРУ</option>
+      {% for code in ktru_codes %}
+      <option value="{{ code }}"{% if ktru_filter == code %} selected{% endif %}>{{ code }}</option>
+      {% endfor %}
+    </select>
+    <label>Наименование</label>
+    <details class="pp-registry-name-filter"{% if name_filters %} open{% endif %}>
+      <summary>
+        {% if name_filters %}
+        Выбрано: {{ name_filters|length }}
+        {% elif name_options and name_options|length > 0 %}
+        Все ({{ name_options|length }})
+        {% else %}
+        Нет вариантов
+        {% endif %}
+      </summary>
+      <div class="pp-registry-name-filter-panel">
+        {% if name_options and name_options|length > 0 %}
+        {% for opt in name_options %}
+        <label class="checkbox-row pp-registry-name-option">
+          <input type="checkbox" name="name" value="{{ opt }}"{% if opt in name_filters %} checked{% endif %}>
+          <span>{{ opt }}</span>
+        </label>
+        {% endfor %}
+        {% else %}
+        <p class="hint">Список наименований пуст{% if ktru_filter %} для выбранного КТРУ{% endif %}.</p>
+        {% endif %}
+      </div>
+    </details>
+    <label for="registry-price-min">Цена за ед., от</label>
+    <input type="text" name="price_min" id="registry-price-min" value="{{ price_min_filter }}" inputmode="decimal" autocomplete="off" placeholder="мин">
+    <label for="registry-price-max">до</label>
+    <input type="text" name="price_max" id="registry-price-max" value="{{ price_max_filter }}" inputmode="decimal" autocomplete="off" placeholder="макс">
+    <input type="hidden" name="sort" value="{{ registry_sort }}">
+    <input type="hidden" name="dir" value="{{ registry_sort_dir }}">
+    <input type="hidden" name="apply_filters" value="1">
+    <label class="checkbox-row pp-registry-group-toggle">
+      <input type="checkbox" name="group" value="1" id="registry-group-stacks"{% if registry_grouped %} checked{% endif %}>
+      <span>Группировать одинаковые характеристики</span>
+    </label>
+    <button type="submit">Применить</button>
+    {% if ktru_filter or name_filters or legacy_name_query or price_min_filter or price_max_filter or registry_grouped %}
+    <a href="{{ request.url_for('page_pp_monitor_samples') }}?reset_names=1">Сбросить</a>
+    {% endif %}
+  </div>
+</form>
+
+<div class="card pp-samples-card">
+  <h3>Каталог ({{ registry_total }}{% if registry_grouped %} групп{% endif %})</h3>
+  {% set has_items = (registry_grouped and registry_groups and registry_groups|length > 0) or (not registry_grouped and registry_rows and registry_rows|length > 0) %}
+  {% if has_items %}
+  <div class="offer-pagination">
+    <span class="hint">Показаны {% if registry_grouped %}группы{% else %}строки{% endif %} {{ pagination.first_row }}–{{ pagination.last_row }} из {{ pagination.total_rows }} · страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_monitor_samples') }}?{{ registry_base_query }}page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% else %}
+      <span class="button secondary disabled">← Предыдущая</span>
+      {% endif %}
+      {% if pagination.has_next %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_monitor_samples') }}?{{ registry_base_query }}page={{ pagination.next_page }}">Следующая →</a>
+      {% else %}
+      <span class="button secondary disabled">Следующая →</span>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+  <div class="pp-samples-scroll">
+  <table class="eis-table pp-samples-table" id="pp-registry-table">
+    <thead>
+      <tr class="pp-registry-table-meta">
+        <th colspan="10">
+          Следующий опрос:
+          {% if pp_monitor_status and pp_monitor_status.polling %}
+          <span id="pp-registry-next-poll-timer" class="pp-registry-poll-timer">опрос…</span>
+          {% elif pp_monitor_status and pp_monitor_status.settings_enabled and pp_monitor_status.env_monitor %}
+          <span id="pp-registry-next-poll-timer" class="pp-registry-poll-timer">—</span>
+          {% elif pp_monitor_status and pp_monitor_status.settings_enabled %}
+          <span id="pp-registry-next-poll-timer" class="pp-registry-poll-timer">ожидает RTS_PP_MONITOR=1</span>
+          {% else %}
+          <span id="pp-registry-next-poll-timer" class="pp-registry-poll-timer">монитор выключен</span>
+          {% endif %}
+        </th>
+      </tr>
+      <tr>
+        <th>Создан черновик</th>
+        {% set sort_ind_link_date = ' ↓' if registry_sort == 'link_date' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'link_date' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.link_date }}">Дата в реестре РТС<span class="eis-sort-ind">{{ sort_ind_link_date }}</span></a></th>
+        {% set sort_ind_ktru = ' ↓' if registry_sort == 'ktru_code' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'ktru_code' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.ktru_code }}">КТРУ<span class="eis-sort-ind">{{ sort_ind_ktru }}</span></a></th>
+        {% set sort_ind_name = ' ↓' if registry_sort == 'name' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'name' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.name }}">Наименование<span class="eis-sort-ind">{{ sort_ind_name }}</span></a></th>
+        {% set sort_ind_tm = ' ↓' if registry_sort == 'trade_mark' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'trade_mark' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.trade_mark }}">Торговая марка<span class="eis-sort-ind">{{ sort_ind_tm }}</span></a></th>
+        {% set sort_ind_valid = ' ↓' if registry_sort == 'validity_date' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'validity_date' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.validity_date }}">Срок ПП<span class="eis-sort-ind">{{ sort_ind_valid }}</span></a></th>
+        {% set sort_ind_price = ' ↓' if registry_sort == 'unit_price' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'unit_price' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.unit_price }}">Цена за ед.<span class="eis-sort-ind">{{ sort_ind_price }}</span></a></th>
+        {% set sort_ind_reg = ' ↓' if registry_sort == 'delivery_regions_count' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'delivery_regions_count' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.delivery_regions_count }}">Кол-во регионов поставки<span class="eis-sort-ind">{{ sort_ind_reg }}</span></a></th>
+        {% set sort_ind_find = ' ↓' if registry_sort == 'has_find' and registry_sort_dir == 'desc' else (' ↑' if registry_sort == 'has_find' and registry_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ registry_sort_urls.has_find }}">Find<span class="eis-sort-ind">{{ sort_ind_find }}</span></a></th>
+        <th>Ссылки</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% if registry_grouped and registry_groups and registry_groups|length > 0 %}
+      {% for group in registry_groups %}
+      {% set stack_id = group.stack_key or group.primary.offer_price_list_item_id %}
+      {{ registry_row(group.primary, 'parent', stack_id, group.member_count) }}
+      {% if group.is_stack %}
+      {% for child in group.children %}
+      {{ registry_row(child, 'child', stack_id, group.member_count) }}
+      {% endfor %}
+      {% endif %}
+      {% endfor %}
+      {% elif registry_rows and registry_rows|length > 0 %}
+      {% for row in registry_rows %}
+      {{ registry_row(row, 'flat', '', 1) }}
+      {% endfor %}
+      {% else %}
+      <tr>
+        <td colspan="10" class="hint pp-registry-empty-cell">
+          {% if ktru_filter or name_filters or legacy_name_query or price_min_filter or price_max_filter %}По заданным фильтрам предложений не найдено.{% else %}Предложений пока нет — они появятся после backfill или инкрементального опроса монитора ПП.{% endif %}
+        </td>
+      </tr>
+      {% endif %}
+    </tbody>
+  </table>
+  </div>
+  {% if has_items %}
+  <div class="offer-pagination offer-pagination-bottom">
+    <span class="hint">Страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_monitor_samples') }}?{{ registry_base_query }}page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% endif %}
+      {% if pagination.has_next %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_monitor_samples') }}?{{ registry_base_query }}page={{ pagination.next_page }}">Следующая →</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll(".pp-stack-toggle").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var stackId = btn.getAttribute("data-stack-id");
+      if (!stackId) return;
+      var expanded = btn.getAttribute("aria-expanded") === "true";
+      var next = !expanded;
+      btn.setAttribute("aria-expanded", next ? "true" : "false");
+      var count = btn.getAttribute("data-member-count") || "";
+      btn.textContent = (next ? "▼ " : "▸ ") + count + " версий";
+      document.querySelectorAll('.pp-stack-child[data-stack-id="' + stackId + '"]').forEach(function (row) {
+        row.classList.toggle("pp-stack-child--collapsed", !next);
+      });
+    });
+  });
+
+  var timerEl = document.getElementById("pp-registry-next-poll-timer");
+  var pollSecondsLeft = {% if pp_monitor_status and pp_monitor_status.seconds_until_next is not none %}{{ pp_monitor_status.seconds_until_next }}{% else %}null{% endif %};
+  var monitorActive = {% if pp_monitor_status and pp_monitor_status.settings_enabled and pp_monitor_status.env_monitor %}true{% else %}false{% endif %};
+  var monitorPolling = {% if pp_monitor_status and pp_monitor_status.polling %}true{% else %}false{% endif %};
+  var statusCheckIntervalSec = 3;
+  var statusCheckSecondsLeft = statusCheckIntervalSec;
+
+  function statusPollIntervalSec() {
+    if (monitorPolling) return 1;
+    if (monitorActive && pollSecondsLeft != null && pollSecondsLeft <= 0) return 1;
+    return 3;
+  }
+
+  function renderTimer() {
+    if (!timerEl) return;
+    if (monitorPolling) {
+      timerEl.textContent = "опрос…";
+      return;
+    }
+    if (!monitorActive) {
+      timerEl.textContent = timerEl.dataset.staticLabel || "монитор выключен";
+      return;
+    }
+    if (pollSecondsLeft == null) {
+      timerEl.textContent = "—";
+      return;
+    }
+    var sec = Math.max(0, Math.floor(pollSecondsLeft));
+    if (sec === 0) {
+      timerEl.textContent = "ожидание запуска…";
+      return;
+    }
+    var min = Math.floor(sec / 60);
+    var rem = sec % 60;
+    timerEl.textContent = min > 0
+      ? (String(min) + " мин " + String(rem).padStart(2, "0") + " сек")
+      : (String(sec) + " сек");
+  }
+
+  function refreshStatus() {
+    fetch("/api/rts-pp-monitor-cron-status", { credentials: "same-origin", headers: { "Accept": "application/json" } })
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (status) {
+        monitorActive = !!(status.settings_enabled && status.env_monitor);
+        monitorPolling = !!status.polling;
+        pollSecondsLeft = status.seconds_until_next == null ? null : Number(status.seconds_until_next);
+        statusCheckIntervalSec = statusPollIntervalSec();
+        renderTimer();
+      })
+      .catch(function () {});
+  }
+
+  setInterval(function () {
+    statusCheckSecondsLeft -= 1;
+    if (pollSecondsLeft != null && pollSecondsLeft > 0) pollSecondsLeft -= 1;
+    statusCheckIntervalSec = statusPollIntervalSec();
+    renderTimer();
+    if (statusCheckSecondsLeft <= 0) {
+      statusCheckSecondsLeft = statusCheckIntervalSec;
+      refreshStatus();
+    }
+  }, 1000);
+  renderTimer();
+})();
+</script>
+{% endblock %}

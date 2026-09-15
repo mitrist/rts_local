@@ -1,0 +1,5 @@
+# Скопируйте в cookies_rts.txt (это имя по умолчанию для rts_invites_poll.py)
+# одну строку: значение заголовка Cookie после входа в ЛК app.rts-tender.ru по ЭП.
+#
+# Как взять: DevTools → Network → любой запрос к app.rts-tender.ru → Request Headers → Cookie
+# (не публикуйте и не коммитьте файл с реальными данными).

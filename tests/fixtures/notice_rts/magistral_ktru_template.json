@@ -1,0 +1,52 @@
+{
+  "code": "32.50.13.110-00005820",
+  "name": "Магистраль соединительная для введения рентгеноконтрастного вещества",
+  "version": 4,
+  "okeis": [{"code": "796", "fullName": "Штука"}],
+  "characteristics": [
+    {
+      "id": 886153,
+      "code": "f0d0406b-f",
+      "name": "Длина трубки",
+      "isRequired": true,
+      "isActual": true,
+      "characteristicType": {"id": 2, "name": "Количественная"},
+      "characteristicKind": {"id": 2, "name": "Изменемая заказчиком с выбором одного значения"},
+      "characteristicValues": [
+        {
+          "id": 5342065,
+          "concreteValue": null,
+          "minValue": "100,0000",
+          "maxValue": "200,0000",
+          "minMathNotation": "ge",
+          "maxMathNotation": "le",
+          "okei": {"code": "004", "fullName": "Сантиметр"},
+          "format": {"id": 1}
+        }
+      ]
+    },
+    {
+      "id": 886155,
+      "code": "004271bf-5",
+      "name": "Вариант исполнения",
+      "isRequired": true,
+      "isActual": true,
+      "characteristicType": {"id": 1, "name": "Качественная"},
+      "characteristicKind": {"id": 2, "name": "Изменемая заказчиком с выбором одного значения"},
+      "characteristicValues": [
+        {"id": 5342071, "qualityDescription": "Прямая"},
+        {"id": 5342072, "qualityDescription": "Угловая"}
+      ]
+    },
+    {
+      "id": 886154,
+      "code": "d4d1178e-d",
+      "name": "Тип коннектора",
+      "isRequired": false,
+      "isActual": true,
+      "characteristicType": {"id": 1, "name": "Качественная"},
+      "characteristicKind": {"id": 2, "name": "Изменемая заказчиком с выбором одного значения"},
+      "characteristicValues": []
+    }
+  ]
+}

@@ -1,0 +1,356 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Связь ЕИС-ПП</h2>
+<p class="hint">
+  <strong>Этап 1 — проверка гипотезы:</strong> пары формируются на этапе
+  <a href="{{ request.url_for('page_offer_matching') }}">Подбор предложений</a>
+  (статус процедуры + цена победителя или ±{{ window_min | default(60) }} мин).
+  <strong>Этап 2:</strong> на карточке пары — prehistory на РТС.
+</p>
+
+{% if flash_ok %}<p class="flash ok">{{ flash_ok }}</p>{% endif %}
+{% if flash_err %}<p class="flash err">{{ flash_err }}</p>{% endif %}
+
+{% if detail_mode and match %}
+<p><a href="{{ request.url_for('page_eis_pp_link') }}">← К списку</a></p>
+
+<div class="card">
+  <h3>Цепочка событий</h3>
+  <p class="hint">Все даты и интервалы приведены к <strong>московскому времени (МСК, UTC+3)</strong>. Время из журнала ЕИС конвертируется из часового пояса заказчика.</p>
+  {% if event_chain.journal_url %}
+  <p class="hint">
+    <a href="{{ event_chain.journal_url }}" target="_blank" rel="noopener">Журнал событий на ЕИС</a>
+    {% if event_chain.journal_count %} · событий из журнала: {{ event_chain.journal_count }}{% endif %}
+    {% if event_chain.journal_error %} · <span class="flash err">не удалось загрузить журнал: {{ event_chain.journal_error }}</span>{% endif %}
+  </p>
+  {% endif %}
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>Дата и время (МСК)</th>
+        <th>Событие</th>
+        <th>Δ, мин</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in event_chain.rows %}
+      <tr{% if row.kind == 'notice_pub' or row.kind == 'pp_pub' %} style="font-weight:600"{% endif %}>
+        <td>{{ row.occurred_display_msk or '—' }}</td>
+        <td>{{ row.label }}</td>
+        <td>{{ row.delta_label }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3" class="hint">Нет данных для хронологии</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <table class="eis-table" style="margin-top:1rem">
+    <tbody>
+      <tr>
+        <th>Извещение</th>
+        <td>
+          {% if match.notice_url %}
+          <a href="{{ match.notice_url }}" target="_blank" rel="noopener"><code>{{ match.purchase_number }}</code></a>
+          {% else %}
+          <code>{{ match.purchase_number }}</code>
+          {% endif %}
+        </td>
+      </tr>
+      <tr>
+        <th>ПП (offer id)</th>
+        <td>
+          {% if match.pp_offer_url %}
+          <a href="{{ match.pp_offer_url }}" target="_blank" rel="noopener"><code>{{ match.offer_price_list_item_id }}</code></a>
+          {% else %}
+          <code>{{ match.offer_price_list_item_id }}</code>
+          {% endif %}
+        </td>
+      </tr>
+      <tr><th>КТРУ</th><td><code>{{ match.ktru_code }}</code></td></tr>
+      <tr><th>Цена за ед. извещения</th><td>{{ match.notice_unit_price_text or '—' }}</td></tr>
+      <tr><th>Цена за ед. ПП</th><td>{{ match.pp_unit_price_text or '—' }}</td></tr>
+      <tr><th>Сумма закупки</th><td>{{ match.notice_line_sum_text or '—' }}</td></tr>
+      <tr><th>Exact (извещение → ПП)</th><td>{% if match.is_exact_match %}<strong>да</strong>{% else %}нет{% endif %}</td></tr>
+      <tr><th>Источник</th><td>{% if match.match_origin_label %}<strong>{{ match.match_origin_label }}</strong>{% else %}текущий сбор{% endif %}</td></tr>
+      <tr><th>Lag (ПП − извещение)</th><td><strong>{{ match.lag_label }}</strong></td></tr>
+      <tr><th>Сценарий</th><td>{% if match.scenario_tag_label %}{{ match.scenario_tag_label }}{% else %}—{% endif %}</td></tr>
+      <tr><th>Участие</th><td>{% if match.participation_intent_label %}{{ match.participation_intent_label }}{% else %}—{% endif %}</td></tr>
+      <tr><th>Статус разметки</th><td>{{ match.analyst_status or 'pending' }}</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:0.75rem">
+    <a href="{{ request.url_for('page_offer_matching') }}?ktru={{ match.ktru_code | urlencode }}">Подбор предложений</a>
+    · <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=match.offer_price_list_item_id) }}">Образец ПП</a>
+    {% if match.stack_key %}
+    · <a href="{{ request.url_for('page_pp_monitor_chain_detail', stack_key=match.stack_key) }}">Цепочка ПП</a>
+    {% endif %}
+  </p>
+</div>
+
+<div class="card">
+  <h3>История на РТС до этого ПП</h3>
+  <p class="hint">
+    Поиск более ранних публикаций с тем же <strong>characteristics_hash</strong>
+    и пересечением по региону из извещения ЕИС.
+    {% if prehistory.anchor_unit_price is not none %}
+    Цена якорного ПП (для справки): <strong>{{ prehistory.anchor_unit_price }}</strong> ₽.
+    {% endif %}
+  </p>
+  <p class="hint">
+    Регион извещения: <strong>{{ prehistory.notice_region or '—' }}</strong>
+    {% if prehistory.notice_delivery_place %} · место поставки: {{ prehistory.notice_delivery_place }}{% endif %}
+  </p>
+  {% if prehistory.error %}
+  <p class="flash err">Не удалось выполнить поиск: {{ prehistory.error }}</p>
+  {% elif prehistory.has_prehistory %}
+  <p class="hint">Найдено предшественников: <strong>{{ prehistory.predecessor_count }}</strong></p>
+  {% else %}
+  <p class="hint">Ранее на РТС (в данных монитора) совпадающих публикаций не найдено.</p>
+  {% endif %}
+  {% if prehistory.skipped_no_find %}
+  <p class="hint">Пропущено кандидатов без Find (регион не проверен): {{ prehistory.skipped_no_find }}</p>
+  {% endif %}
+  {% if prehistory.predecessors %}
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>Дата в реестре</th>
+        <th>ПП id</th>
+        <th>Цена</th>
+        <th>Регион (совп.)</th>
+        <th>Δ до якоря</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in prehistory.predecessors %}
+      <tr>
+        <td>{{ row.link_date_display_msk or '—' }}</td>
+        <td>
+          {% if row.pp_offer_url %}
+          <a href="{{ row.pp_offer_url }}" target="_blank" rel="noopener"><code>{{ row.offer_price_list_item_id }}</code></a>
+          {% else %}
+          <code>{{ row.offer_price_list_item_id }}</code>
+          {% endif %}
+        </td>
+        <td>{{ row.unit_price if row.unit_price is not none else '—' }}</td>
+        <td>{{ row.matched_region_label or '—' }}</td>
+        <td>{{ row.delta_to_anchor_label }}</td>
+        <td>
+          <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=row.offer_price_list_item_id) }}">Карточка</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Diff характеристик</h3>
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>Характеристика</th>
+        <th>ЕИС</th>
+        <th>ПП</th>
+        <th>Статус</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in match.diff %}
+      <tr>
+        <td>{{ row.label or row.key or '—' }}</td>
+        <td>{{ (row.notice_values or []) | join('; ') or '—' }}</td>
+        <td>{{ (row.pp_values or []) | join('; ') or '—' }}</td>
+        <td>{{ row.status }}</td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4" class="hint">Нет данных diff</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3>Разметка аналитика</h3>
+  <form method="post" action="{{ request.url_for('action_eis_pp_link_status') }}" class="offer-filter-form">
+    <input type="hidden" name="purchase_number" value="{{ match.purchase_number }}">
+    <input type="hidden" name="line_key" value="{{ match.line_key }}">
+    <input type="hidden" name="offer_price_list_item_id" value="{{ match.offer_price_list_item_id }}">
+    <input type="hidden" name="current_status" value="{{ match.analyst_status or 'pending' }}">
+    <div class="offer-filter-row">
+      <label>Сценарий
+        <select name="scenario_tag" id="scenario_tag">
+          {% for tag in scenario_tags %}
+          <option value="{{ tag.code }}"{% if match.scenario_tag == tag.code %} selected{% endif %}>{{ tag.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label>Участие
+        <select name="participation_intent" id="participation_intent">
+          {% for intent in participation_intents %}
+          <option value="{{ intent.code }}"{% if match.participation_intent == intent.code %} selected{% endif %}>{{ intent.label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </div>
+    <label for="analyst_note">Заметка</label>
+    <textarea id="analyst_note" name="analyst_note" rows="3">{{ match.analyst_note or '' }}</textarea>
+    <div class="eis-submit-row" style="margin-top:0.75rem">
+      <button type="submit" name="tag_only" value="1">Сохранить теги</button>
+      <button type="submit" name="analyst_status" value="confirmed">Гипотеза подтверждена</button>
+      <button type="submit" name="analyst_status" value="rejected">Гипотеза опровергнута</button>
+    </div>
+  </form>
+  {% if match.scenario_tag_label or match.participation_intent_label %}
+  <p class="hint" style="margin-top:0.75rem">
+    Текущие теги:
+    {% if match.scenario_tag_label %}<strong>{{ match.scenario_tag_label }}</strong>{% else %}сценарий не задан{% endif %}
+    ·
+    {% if match.participation_intent_label %}<strong>{{ match.participation_intent_label }}</strong>{% else %}участие не задано{% endif %}
+  </p>
+  {% endif %}
+  {% if match.analyst_user %}
+  <p class="hint">Последняя разметка: {{ match.analyst_user }} · {{ match.analyst_at_display_msk or '—' }}</p>
+  {% endif %}
+</div>
+
+{% else %}
+
+{% if flash_ok %}<p class="flash ok">{{ flash_ok }}</p>{% endif %}
+{% if flash_err %}<p class="flash err">{{ flash_err }}</p>{% endif %}
+
+<div class="card" style="margin-top:1rem">
+  <h3>Добавить пару вручную</h3>
+  <p class="hint">
+    Для пар, найденных аналитиком вне автоматического поиска. Find загружается с РТС,
+    при отсутствии HTML извещения — подтягивается с ЕИС; выполняется compare;
+    источник — «ручной импорт», статус разметки — pending.
+  </p>
+  <form method="post" action="{{ request.url_for('action_eis_pp_manual_register') }}" class="eis-inline-form">
+    <label>Извещение <input name="purchase_number" required placeholder="0319500000726000151"></label>
+    <label>line_key <input name="line_key" placeholder="авто"></label>
+    <label>ПП id <input name="offer_id" required placeholder="l9qMBSfomO6G"></label>
+    <label>Дата в реестре (МСК) <input name="link_date_msk" placeholder="16.07.2026 11:16:59"></label>
+    <label>ОКТМО <input name="oktmo" placeholder="04701000001"></label>
+    <label>Заметка <input name="analyst_note" style="min-width:16rem"></label>
+    <button type="submit">Импортировать</button>
+  </form>
+</div>
+
+<form method="get" action="{{ request.url_for('page_eis_pp_link') }}" class="offer-filter-form">
+  {% if list_sort %}
+  <input type="hidden" name="sort" value="{{ list_sort }}">
+  <input type="hidden" name="dir" value="{{ list_sort_dir }}">
+  {% endif %}
+  <div class="offer-filter-row">
+    <label>KTRU
+      <select name="ktru">
+        <option value="">Все pilot</option>
+        {% for code in pilot_ktru_codes %}
+        <option value="{{ code }}"{% if filters.ktru == code %} selected{% endif %}>{{ code }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Статус
+      <select name="status">
+        <option value="all"{% if filters.status == 'all' %} selected{% endif %}>Все</option>
+        <option value="pending"{% if filters.status == 'pending' %} selected{% endif %}>pending</option>
+        <option value="confirmed"{% if filters.status == 'confirmed' %} selected{% endif %}>confirmed</option>
+        <option value="rejected"{% if filters.status == 'rejected' %} selected{% endif %}>rejected</option>
+      </select>
+    </label>
+    <label>Lag
+      <select name="lag">
+        <option value="all"{% if filters.lag == 'all' %} selected{% endif %}>±{{ window_min }} мин</option>
+        <option value="after"{% if filters.lag == 'after' %} selected{% endif %}>ПП после извещения</option>
+        <option value="before"{% if filters.lag == 'before' %} selected{% endif %}>ПП до извещения</option>
+        <option value="zero"{% if filters.lag == 'zero' %} selected{% endif %}>Одновременно (0)</option>
+      </select>
+    </label>
+    <button type="submit">Применить</button>
+  </div>
+</form>
+
+{% if stats.hypothesis %}
+<div class="card" style="margin-top:1rem">
+  <h3>Сводка по гипотезе</h3>
+  <p class="hint">
+    Окно: ±{{ stats.hypothesis.window_min }} мин ·
+    кандидатов: <strong>{{ stats.hypothesis.total_candidates }}</strong> ·
+    pending: {{ stats.hypothesis.pending }} ·
+    confirmed: {{ stats.hypothesis.confirmed }} ·
+    rejected: {{ stats.hypothesis.rejected }}
+  </p>
+  <p class="hint">
+    Lag: до извещения {{ stats.hypothesis.lag_before_notice }} ·
+    после {{ stats.hypothesis.lag_after_notice }} ·
+    одновременно {{ stats.hypothesis.lag_zero }}
+  </p>
+</div>
+{% endif %}
+
+<div class="card" style="margin-top:1rem">
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>Извещение</th>
+        {% set sort_ind_notice = ' ↓' if list_sort == 'notice_pub' and list_sort_dir == 'desc' else (' ↑' if list_sort == 'notice_pub' and list_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ list_sort_urls.notice_pub }}">Публикация на ЕИС<span class="eis-sort-ind">{{ sort_ind_notice }}</span></a></th>
+        <th>ПП id</th>
+        {% set sort_ind_pp = ' ↓' if list_sort == 'pp_link' and list_sort_dir == 'desc' else (' ↑' if list_sort == 'pp_link' and list_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ list_sort_urls.pp_link }}">Публикация ПП<span class="eis-sort-ind">{{ sort_ind_pp }}</span></a></th>
+        {% set sort_ind_lag = ' ↓' if list_sort == 'lag' and list_sort_dir == 'desc' else (' ↑' if list_sort == 'lag' and list_sort_dir == 'asc' else '') %}
+        <th><a class="eis-sort-link" href="{{ list_sort_urls.lag }}">Lag<span class="eis-sort-ind">{{ sort_ind_lag }}</span></a></th>
+        <th>Цена за ед. извещения</th>
+        <th>Цена за ед. ПП</th>
+        <th>Сумма закупки</th>
+        <th>Prehistory</th>
+        <th>Источник</th>
+        <th>Сценарий</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>
+          {% if row.notice_url %}
+          <a href="{{ row.notice_url }}" target="_blank" rel="noopener"><code>{{ row.purchase_number }}</code></a>
+          {% else %}
+          <code>{{ row.purchase_number }}</code>
+          {% endif %}
+        </td>
+        <td>{{ row.notice_pub_display_msk or '—' }}</td>
+        <td>
+          {% if row.pp_offer_url %}
+          <a href="{{ row.pp_offer_url }}" target="_blank" rel="noopener"><code>{{ row.offer_price_list_item_id }}</code></a>
+          {% else %}
+          <code>{{ row.offer_price_list_item_id }}</code>
+          {% endif %}
+        </td>
+        <td>{{ row.pp_link_display_msk or '—' }}</td>
+        <td><strong>{{ row.lag_label }}</strong></td>
+        <td>{{ row.notice_unit_price_text or '—' }}</td>
+        <td>{{ row.pp_unit_price_text or '—' }}</td>
+        <td>{{ row.notice_line_sum_text or '—' }}</td>
+        <td>{% if row.has_prehistory %}<strong>{{ row.prehistory_count }}</strong>{% else %}0{% endif %}</td>
+        <td>{% if row.match_origin_label %}<span class="hint">{{ row.match_origin_label }}</span>{% else %}—{% endif %}</td>
+        <td>{% if row.scenario_tag %}<code>{{ row.scenario_tag }}</code>{% else %}—{% endif %}</td>
+        <td>
+          <a href="{{ request.url_for('page_eis_pp_link') }}?purchase_number={{ row.purchase_number | urlencode }}&amp;line_key={{ row.line_key | urlencode }}&amp;offer_id={{ row.offer_price_list_item_id | urlencode }}">Подробнее</a>
+        </td>
+      </tr>
+      {% else %}
+      <tr><td colspan="12" class="hint">Пока нет кандидатов (exact + цена победителя или ±{{ window_min }} мин). Запустите backfill или дождитесь новых извещений и ПП.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pagination.total_pages > 1 %}
+  <p class="hint">Страница {{ pagination.page }} из {{ pagination.total_pages }} ({{ pagination.total_rows }} записей)</p>
+  {% endif %}
+</div>
+
+{% endif %}
+{% endblock %}

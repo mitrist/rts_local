@@ -1,0 +1,29 @@
+# Watchdog: проверяет /health/live и перезапускает rts-tender при зависании.
+#
+# Установка:
+#   sudo mkdir -p /run/rts-tender && sudo chown mitrist12:mitrist12 /run/rts-tender
+#   sudo cp deploy/rts-tender-watchdog.service.example /etc/systemd/system/rts-tender-watchdog.service
+#   sudo cp deploy/rts-tender-watchdog.timer.example /etc/systemd/system/rts-tender-watchdog.timer
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rts-tender-watchdog.timer
+#
+# Переменные (EnvironmentFile service.env опционально):
+#   RTS_WATCHDOG_URL=http://127.0.0.1:8765/health/live
+#   RTS_WATCHDOG_TIMEOUT_SEC=5
+#   RTS_WATCHDOG_MAX_FAILURES=3
+#   RTS_HEALTH_MAX_LOOP_LAG_SEC=15  (в rts-tender — порог degraded)
+
+[Unit]
+Description=RTS Tender health watchdog (oneshot)
+After=network.target rts-tender.service
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+WorkingDirectory=/opt/rts_tender/app
+EnvironmentFile=-/etc/rts-tender/service.env
+ExecStart=/opt/rts_tender/venv/bin/python /opt/rts_tender/app/tools/rts_tender_watchdog.py
+
+[Install]
+WantedBy=multi-user.target

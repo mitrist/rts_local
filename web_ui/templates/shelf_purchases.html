@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Закупки ч.12 ст.93</h2>
+
+<div class="card">
+  {% if html_flash_ok %}<div class="msg ok">{{ html_flash_ok }}</div>{% endif %}
+  {% if html_flash_err %}<div class="msg err">{{ html_flash_err }}</div>{% endif %}
+
+  {% if rows and rows|length > 0 %}
+  <table class="eis-table shelf-table">
+    <thead>
+      <tr>
+        <th>Закупка</th>
+        <th>RSS pubDate</th>
+        <th>RSS впервые увидел</th>
+        <th>Этап</th>
+        <th>Заказчик</th>
+        <th>Цена</th>
+        <th>HTML карточка</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in rows %}
+      <tr>
+        <td>{% if row.link %}<a href="{{ row.link }}" target="_blank" rel="noopener"><code>{{ row.reg_number }}</code></a>{% else %}<code>{{ row.reg_number }}</code>{% endif %}</td>
+        <td>{{ row.pub_display_msk }}</td>
+        <td>{{ row.first_seen_display_msk }}</td>
+        <td>{{ row.stage_text or '—' }}</td>
+        <td>{{ row.customer_name or '—' }}</td>
+        <td>{{ row.price_text or '—' }}</td>
+        <td>
+          {% if row.html_status == 'loaded' %}
+            загружено · позиций: {{ row.html_lines_count }} · характеристик: {{ row.html_characteristics_count }}
+            <div class="hint">{{ row.html_fetched_display_msk }}</div>
+          {% elif row.html_status == 'error' %}
+            ошибка
+            <div class="hint">{{ row.html_error_text or '—' }}</div>
+          {% else %}
+            не загружено
+          {% endif %}
+        </td>
+        <td>
+          <form method="post" action="{{ request.url_for('action_eis_notice_html_fetch') }}">
+            <input type="hidden" name="purchase_number" value="{{ row.reg_number }}">
+            <input type="hidden" name="source_url" value="{{ row.link or '' }}">
+            <button type="submit">Загрузить</button>
+            <button type="button" class="secondary shelf-open-modal" data-purchase-number="{{ row.reg_number }}">Открыть</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">RSS-наблюдений пока нет. Включите монитор на странице «Извещения о закупке».</p>
+  {% endif %}
+</div>
+
+<div id="shelf-modal" class="eis-modal" hidden aria-hidden="true">
+  <div class="eis-modal-backdrop" data-shelf-modal-close tabindex="-1"></div>
+  <div class="eis-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="shelf-modal-heading">
+    <div class="eis-modal-toolbar">
+      <button type="button" class="eis-modal-close" data-shelf-modal-close aria-label="Закрыть">×</button>
+    </div>
+    <h4 id="shelf-modal-heading" class="eis-modal-heading">HTML карточка ЕИС</h4>
+    <p id="shelf-modal-meta" class="hint"></p>
+    <div id="shelf-modal-body"></div>
+  </div>
+</div>
+
+<script>
+(function () {
+  var modal = document.getElementById("shelf-modal");
+  var body = document.getElementById("shelf-modal-body");
+  var meta = document.getElementById("shelf-modal-meta");
+  if (!modal || !body) return;
+
+  function openModal() {
+    modal.removeAttribute("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    document.documentElement.style.overflow = "hidden";
+  }
+  function closeModal() {
+    modal.setAttribute("hidden", "");
+    modal.setAttribute("aria-hidden", "true");
+    document.documentElement.style.overflow = "";
+  }
+  modal.querySelectorAll("[data-shelf-modal-close]").forEach(function (el) {
+    el.addEventListener("click", closeModal);
+  });
+
+  function renderPayload(data) {
+    body.innerHTML = "";
+    if (data.status === "not_loaded") {
+      body.textContent = "HTML карточка ещё не загружена. Нажмите «Загрузить» в строке закупки.";
+      return;
+    }
+    if (data.status === "error") {
+      body.textContent = "Ошибка загрузки: " + (data.error_text || "—");
+      return;
+    }
+    if (meta) meta.textContent = "Закупка " + data.purchase_number + " · загружено " + (data.fetched_display_msk || "—");
+    (data.lines || []).forEach(function (line) {
+      var box = document.createElement("div");
+      box.className = "shelf-position-box";
+      var title = document.createElement("h4");
+      title.textContent = (line.ktru_code || "—") + " · " + (line.position_display_name || "—");
+      box.appendChild(title);
+      var price = document.createElement("p");
+      price.className = "hint";
+      price.textContent = "Цена: " + (line.price_per_unit_text || "—") + " · сумма: " + (line.line_sum_text || "—");
+      box.appendChild(price);
+      var table = document.createElement("table");
+      table.className = "eis-table";
+      table.innerHTML = "<thead><tr><th>Характеристика</th><th>Значение</th></tr></thead><tbody></tbody>";
+      var tbody = table.querySelector("tbody");
+      (line.characteristics || []).forEach(function (ch) {
+        var tr = document.createElement("tr");
+        var td1 = document.createElement("td");
+        var td2 = document.createElement("td");
+        td1.textContent = ch.display_label || "—";
+        td2.textContent = ch.value_display || "—";
+        tr.appendChild(td1);
+        tr.appendChild(td2);
+        tbody.appendChild(tr);
+      });
+      box.appendChild(table);
+      body.appendChild(box);
+    });
+  }
+
+  document.querySelectorAll(".shelf-open-modal").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var pn = btn.getAttribute("data-purchase-number");
+      body.textContent = "Загрузка…";
+      if (meta) meta.textContent = "";
+      openModal();
+      fetch("/api/eis-notice-html/" + encodeURIComponent(pn), { headers: { "Accept": "application/json" } })
+        .then(function (resp) { return resp.json(); })
+        .then(renderPayload)
+        .catch(function (err) { body.textContent = "Ошибка: " + err; });
+    });
+  });
+})();
+</script>
+{% endblock %}

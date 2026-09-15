@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "Вход — RTS" }}</title>
+  <script>
+    if (localStorage.getItem("rtsTheme") === "light") {
+      document.documentElement.setAttribute("data-theme", "light");
+    }
+  </script>
+  <link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}?v=11">
+</head>
+<body class="login-page">
+  <button type="button" class="theme-toggle login-theme-toggle" id="theme-toggle">
+    <span class="theme-toggle-icon" aria-hidden="true">☾</span>
+    <span class="theme-toggle-label">Светлая тема</span>
+  </button>
+  <main class="login-card card">
+    <h1>Вход в консоль RTS</h1>
+    {% if login_error %}
+    <div class="msg err">{{ login_error }}</div>
+    {% endif %}
+    <form method="post" action="{{ request.url_for('action_login') }}">
+      <input type="hidden" name="next" value="{{ next_path }}">
+      <label for="username">Логин</label>
+      <input id="username" name="username" type="text" autocomplete="username" required autofocus>
+      <label for="password">Пароль</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Войти</button>
+    </form>
+  </main>
+  <script src="{{ request.url_for('static', path='theme.js') }}?v=1"></script>
+</body>
+</html>

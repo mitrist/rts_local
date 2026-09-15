@@ -1,0 +1,195 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="{{ request.url_for('page_pp_monitor_samples') }}">← К реестру предложений</a>
+{% if chain_url and settings_admin %}
+ · <a href="{{ chain_url }}">Открыть цепочку ПП</a>
+{% endif %}
+</p>
+<h2>Образец ПП конкурента</h2>
+
+<div class="card">
+  <h3>Черновик ПП</h3>
+  <p class="hint">
+    Характеристики и условия поставки копируются из образца конкурента (find).
+    Страна происхождения подставляется автоматически из справочника CSV.
+    {% if participation_price_ord_enabled %}
+    Цена рассчитывается через price_ord.
+    {% else %}
+    Справочник price_ord отключён — цена в черновике может быть не заполнена.
+    {% endif %}
+    Реестровые номера и документы проверьте в ЛК РТС.
+  </p>
+  <div id="monitor-draft-status" class="hint">
+    {% if monitor_draft and monitor_draft.status == 'created' and monitor_draft.rts_draft_id %}
+      Черновик создан (id {{ monitor_draft.rts_draft_id }}).
+      {% if monitor_draft.edit_url %}
+      <a href="{{ monitor_draft.edit_url }}" target="_blank" rel="noopener">Редактировать в РТС</a>
+      {% endif %}
+    {% elif monitor_draft and monitor_draft.status == 'error' %}
+      <span class="msg err">Ошибка: {{ monitor_draft.error_text or '—' }}</span>
+    {% else %}
+      Черновик ещё не создавался для вашего профиля.
+    {% endif %}
+  </div>
+  <div id="monitor-draft-verify" class="hint" style="margin-top:0.5rem"></div>
+  <div class="eis-submit-row" style="margin-top:0.75rem">
+    <button type="button" id="monitor-create-draft-btn" class="offer-participate-btn">
+      <span class="offer-participate-btn__label">Создать черновик</span>
+      <span class="offer-participate-btn__hint">Supplier API под вашим профилем</span>
+    </button>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Общие сведения</h3>
+  <table class="eis-table">
+    <tbody>
+      <tr><th>ID ПП</th><td><code>{{ sample.offer_price_list_item_id }}</code></td></tr>
+      <tr><th>КТРУ</th><td><code>{{ sample.ktru_code or '—' }}</code>{% if ktru_name %} — {{ ktru_name }}{% endif %}</td></tr>
+      <tr><th>Товарный знак</th><td>{{ find_item.tradeMark or sample.trade_mark or '—' }}</td></tr>
+      <tr><th>Ед. изм.</th><td>{{ unit_name or '—' }}</td></tr>
+      <tr><th>Цена (образец)</th><td>{% if sample.unit_price is not none %}{{ sample.unit_price }}{% else %}—{% endif %}</td></tr>
+      <tr><th>Дата в реестре</th><td>{{ sample.link_date or '—' }}</td></tr>
+      <tr><th>Создано (find)</th><td>{{ find_item.createDateTime or '—' }}</td></tr>
+      <tr><th>Загружено</th><td>{{ sample.fetched_display_msk or '—' }} ({{ sample.source or '—' }})</td></tr>
+      <tr>
+        <th>Карточка РТС</th>
+        <td>
+          {% if sample.card_url %}
+          <a href="{{ sample.card_url }}" target="_blank" rel="noopener">Открыть на offers.rts-tender.ru</a>
+          {% else %}
+          —
+          {% endif %}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+{% if eis_pp_link_candidates %}
+<div class="card">
+  <h3>Кандидаты извещений ЕИС</h3>
+  <table class="eis-table">
+    <thead>
+      <tr><th>Извещение</th><th>Lag</th><th>Статус</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for link in eis_pp_link_candidates %}
+      <tr>
+        <td><code>{{ link.purchase_number }}</code></td>
+        <td><strong>{{ link.lag_label }}</strong></td>
+        <td>{{ link.analyst_status or 'pending' }}</td>
+        <td>
+          <a href="{{ request.url_for('page_eis_pp_link') }}?purchase_number={{ link.purchase_number | urlencode }}&amp;line_key={{ link.line_key | urlencode }}&amp;offer_id={{ link.offer_price_list_item_id | urlencode }}">Подробнее</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  <p class="hint"><a href="{{ request.url_for('page_eis_pp_link') }}?offer_id={{ sample.offer_price_list_item_id | urlencode }}">Все сопоставления для этого ПП</a></p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Характеристики КТРУ ({{ characteristics|length }})</h3>
+  {% if characteristics and characteristics|length > 0 %}
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>Характеристика</th>
+        <th>Значение</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for ch in characteristics %}
+      <tr>
+        <td>{{ ch.name }}</td>
+        <td>{{ ch.value }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Характеристики не найдены в сохранённом find.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var offerId = {{ sample.offer_price_list_item_id | tojson }};
+  var btn = document.getElementById("monitor-create-draft-btn");
+  var statusEl = document.getElementById("monitor-draft-status");
+  var verifyEl = document.getElementById("monitor-draft-verify");
+  var busy = false;
+
+  function renderVerify(report) {
+    if (!verifyEl || !report) return;
+    var issues = report.issues != null ? report.issues : "?";
+    var ok = report.ok != null ? report.ok : "?";
+    verifyEl.textContent = "Сверка find vs черновик: ok " + ok + ", расхождений " + issues;
+  }
+
+  function renderDraft(data) {
+    if (!statusEl) return;
+    var parts = [];
+    if (data.already_existed) {
+      parts.push("Черновик уже был создан ранее.");
+    } else {
+      parts.push("Черновик создан (id " + (data.rts_draft_id || "—") + ").");
+    }
+    if (data.edit_url) {
+      parts.push('<a href="' + data.edit_url + '" target="_blank" rel="noopener">Редактировать в РТС</a>');
+    }
+    if (data.registry_warning) {
+      parts.push('<span class="msg err">' + data.registry_warning + "</span>");
+    }
+    statusEl.innerHTML = parts.join(" ");
+    renderVerify(data.verify_report);
+  }
+
+  if (!btn) return;
+  btn.addEventListener("click", function () {
+    if (busy) return;
+    busy = true;
+    btn.disabled = true;
+    if (statusEl) statusEl.textContent = "Создание черновика ПП в РТС…";
+    fetch("/api/rts/pp/draft-from-monitor", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ offer_price_list_item_id: offerId })
+    })
+      .then(function (resp) {
+        return resp.text().then(function (text) {
+          var data = null;
+          if (text) {
+            try { data = JSON.parse(text); } catch (e) { /* not JSON */ }
+          }
+          if (!resp.ok) {
+            var detail = data && data.detail ? data.detail : (text || ("HTTP " + resp.status));
+            throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+          }
+          if (!data) throw new Error(text || "Пустой ответ сервера");
+          return data;
+        });
+      })
+      .then(function (data) {
+        busy = false;
+        btn.disabled = false;
+        renderDraft(data);
+      })
+      .catch(function (err) {
+        busy = false;
+        btn.disabled = false;
+        var msg = err && err.message ? err.message : String(err);
+        if (msg === "Failed to fetch") {
+          msg = "Не удалось связаться с сервером (сеть или таймаут). Подождите до минуты и попробуйте снова.";
+        }
+        if (statusEl) statusEl.innerHTML = '<span class="msg err">' + msg + "</span>";
+      });
+  });
+})();
+</script>
+{% endblock %}

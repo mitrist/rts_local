@@ -1,0 +1,49 @@
+{
+  "page": [
+    {
+      "id": 335155,
+      "protectedOfferItemId": "BXqmnpcDpEAG",
+      "name": "Стул тест",
+      "ktru": { "code": "31.01.11.150-00000003", "name": "Стул" },
+      "ktruCharacteristics": [
+        {
+          "name": "Вид материала спинки",
+          "characteristicValues": [
+            { "qualityDescription": "Дерево", "characteristicName": "Вид материала спинки" }
+          ]
+        }
+      ],
+      "offer": { "status": "Published" }
+    },
+    {
+      "id": 999001,
+      "name": "Черновик",
+      "ktru": { "code": "99.99.99.999-00000001", "name": "Черновик" },
+      "ktruCharacteristics": [],
+      "offer": { "status": "Draft" }
+    },
+    {
+      "id": 999002,
+      "name": "Монитор",
+      "ktru": { "code": "26.20.11.000-00000001", "name": "Монитор" },
+      "ktruCharacteristics": [
+        {
+          "name": "Диагональ матрицы дисплея",
+          "characteristicValues": [
+            {
+              "qualityDescription": null,
+              "concreteValue": null,
+              "minValue": "65,0",
+              "maxValue": "70,0",
+              "minMathNotation": "ge",
+              "maxMathNotation": "lt",
+              "okeiFullName": "Дюйм (25,4 мм)"
+            }
+          ]
+        }
+      ],
+      "offer": { "status": "Published" }
+    }
+  ],
+  "total": 3
+}

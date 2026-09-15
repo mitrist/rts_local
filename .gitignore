@@ -1,0 +1,72 @@
+# Secrets — never commit
+cookies_rts.txt
+env.txt
+web_users.txt
+eis.env
+service.env
+rts_invites_state.json
+.env
+.env.*
+!.env.example
+!deploy/*.example
+!deploy/*.env.example
+
+# Runtime / local state
+*.sqlite3
+*.sqlite3-*
+eis_ezt_state.json
+eis_analytics_scan_state.json
+eis_history_state.json
+eis_history_changelog.json
+history_job/
+history_job_*.json
+eis_analytics_scan_changelog.json
+eis_ktru_changelog.json
+eis_ezt_last_run.json
+eis_rss_cron_settings.json
+last_*.json
+rts_pp_monitor.json
+auto_participate.json
+notification_settings.json
+rts_pp_monitor_poll.lock
+rts_pp_monitor_cron_state.json
+ktru_rts_cache/
+price_order/
+linux_russian_trusted_root_ca_pem/
+
+# One-off probe/deploy scripts (often contain host passwords / local SSH paths)
+tools/_*.py
+
+# Cookie profiles and local meta
+/cookies/
+/data/
+/var/
+
+# Sample / debug captures
+/incoming/
+alert.txt
+messageView.aspx
+/*.html
+!web_ui/templates/*.html
+
+# Python / venv / test cache
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.pytest_tmp/
+
+# IDE / OS
+.cursor/
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Backups / office temp
+*.bak*
+~$*
+*.docx

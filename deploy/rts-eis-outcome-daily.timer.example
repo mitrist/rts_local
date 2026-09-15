@@ -1,0 +1,15 @@
+# Запуск в 20:00 MSK — пересчёт извещений, опубликованных вчера.
+#
+#   systemctl list-timers rts-eis-outcome-daily.timer
+
+[Unit]
+Description=Daily EIS outcome backfill (yesterday MSK)
+
+[Timer]
+OnCalendar=*-*-* 20:00:00 Europe/Moscow
+Persistent=true
+AccuracySec=5min
+Unit=rts-eis-outcome-daily.service
+
+[Install]
+WantedBy=timers.target

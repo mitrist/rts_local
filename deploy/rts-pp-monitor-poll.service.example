@@ -1,0 +1,35 @@
+# Опрос реестра ПП конкурентов (все страницы). Запускается таймером rts-pp-monitor-poll.timer.
+#
+# Установка:
+#   sudo cp deploy/rts-pp-monitor-poll.service.example /etc/systemd/system/rts-pp-monitor-poll.service
+#   sudo cp deploy/rts-pp-monitor-poll.timer.example /etc/systemd/system/rts-pp-monitor-poll.timer
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rts-pp-monitor-poll.timer
+#
+# В /etc/rts-tender/service.env:
+#   RTS_PP_MONITOR=1
+#   RTS_PP_MONITOR_CRON=1
+#   RTS_PP_MONITOR_SUPERVISOR=0
+#   RTS_PP_MONITOR_INTERVAL_SEC=420
+#   RTS_PP_MONITOR_FULL_PAGES=0
+#   RTS_META_DIR=/var/lib/rts_local
+#   EIS_ANALYTICS_DB=/var/lib/rts_local/eis_analytics.sqlite3
+#
+# Для rts_local замените User/paths на ваши (см. deploy/DEPLOY.md).
+
+[Unit]
+Description=RTS PP monitor registry poll (oneshot)
+After=network.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/rts_local/app
+EnvironmentFile=/etc/rts-tender/service.env
+EnvironmentFile=-/etc/rts-tender/eis.env
+ExecStart=/opt/rts_local/venv/bin/python -m rts_pp_monitor_cron
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

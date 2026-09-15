@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Цепочка ПП</h2>
+<p class="hint">
+  Стопки — предложения с одинаковым набором характеристик КТРУ (условия поставки и регионы не учитываются).
+  «Наше» ПП в цепочке определяется по цене −5% от конкурента в той же стопке.
+</p>
+
+{% if flash_ok %}<p class="flash ok">{{ flash_ok }}</p>{% endif %}
+{% if flash_err %}<p class="flash err">{{ flash_err }}</p>{% endif %}
+
+<form method="get" action="{{ request.url_for('page_pp_monitor_chain') }}" class="offer-filter-form pp-registry-filter-form">
+  <div class="offer-filter-row">
+    <label for="chain-ktru-filter">КТРУ</label>
+    <select name="ktru" id="chain-ktru-filter">
+      <option value=""{% if not ktru_filter %} selected{% endif %}>Все КТРУ</option>
+      {% for code in ktru_codes %}
+      <option value="{{ code }}"{% if ktru_filter == code %} selected{% endif %}>{{ code }}</option>
+      {% endfor %}
+    </select>
+    <label for="chain-min-members">Мин. версий</label>
+    <input type="number" name="min" id="chain-min-members" min="2" max="50" value="{{ min_members }}">
+    <label>
+      <input type="checkbox" name="only_our" value="1"{% if only_with_our %} checked{% endif %}>
+      Только с нашим ПП
+    </label>
+    <button type="submit">Применить</button>
+    {% if ktru_filter or only_with_our or min_members != 2 %}
+    <a href="{{ request.url_for('page_pp_monitor_chain') }}">Сбросить</a>
+    {% endif %}
+  </div>
+</form>
+
+<div class="eis-submit-row" style="margin-bottom:1rem">
+  <form method="post" action="{{ request.url_for('action_admin_pp_monitor_chain_backfill') }}">
+    <button type="submit" class="button secondary">Пересчитать стопки (hash)</button>
+  </form>
+</div>
+
+<div class="card pp-samples-card">
+  <h3>Стопки ({{ stack_total }})</h3>
+  {% if stacks and stacks|length > 0 %}
+  <div class="offer-pagination">
+    <span class="hint">Страница {{ pagination.page }} из {{ pagination.total_pages }}</span>
+    <div class="offer-pagination-actions">
+      {% if pagination.has_prev %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_monitor_chain') }}?ktru={{ ktru_filter|urlencode }}&min={{ min_members }}&only_our={{ 1 if only_with_our else 0 }}&page={{ pagination.prev_page }}">← Предыдущая</a>
+      {% endif %}
+      {% if pagination.has_next %}
+      <a class="button secondary" href="{{ request.url_for('page_pp_monitor_chain') }}?ktru={{ ktru_filter|urlencode }}&min={{ min_members }}&only_our={{ 1 if only_with_our else 0 }}&page={{ pagination.next_page }}">Следующая →</a>
+      {% endif %}
+    </div>
+  </div>
+  <table class="eis-table">
+    <thead>
+      <tr>
+        <th>КТРУ</th>
+        <th>Версий</th>
+        <th>Период</th>
+        <th>Цены (мин–макс)</th>
+        <th>Наше ПП</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for stack in stacks %}
+      <tr>
+        <td><code>{{ stack.ktru_code }}</code></td>
+        <td>{{ stack.member_count }}</td>
+        <td>
+          {{ stack.first_link_date or '—' }}
+          {% if stack.last_link_date and stack.last_link_date != stack.first_link_date %}
+          — {{ stack.last_link_date }}
+          {% endif %}
+        </td>
+        <td>
+          {% if stack.min_price is not none and stack.max_price is not none %}
+          {{ stack.min_price }} — {{ stack.max_price }}
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          {% if stack.has_our_pp %}
+          <span class="flash ok" style="display:inline;padding:0.15rem 0.4rem">да{% if stack.our_count %} ({{ stack.our_count }}){% endif %}</span>
+          {% else %}—{% endif %}
+        </td>
+        <td>
+          <a href="{{ request.url_for('page_pp_monitor_chain_detail', stack_key=stack.stack_key) }}">Цепочка →</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Стопок не найдено. Убедитесь, что для записей реестра загружен find и выполнен пересчёт hash.</p>
+  {% endif %}
+</div>
+{% endblock %}

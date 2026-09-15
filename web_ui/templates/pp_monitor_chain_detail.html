@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a href="{{ request.url_for('page_pp_monitor_chain') }}">← К списку стопок</a></p>
+<h2>Цепочка ПП</h2>
+<p class="hint">
+  КТРУ <code>{{ ktru_code }}</code> · {{ member_count }} версий{% if copy_count %} ({{ copy_count }} копий){% endif %} · ключ <code>{{ stack_key }}</code>
+</p>
+
+<div class="card">
+  <table class="eis-table pp-chain-table">
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Дата в реестре РТС</th>
+        <th>Цена</th>
+        <th>Торговая марка</th>
+        <th>Регионов</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for member in members %}
+      <tr{% if member.is_our_pp %} class="pp-chain-our-row"{% endif %}>
+        <td>{{ loop.index }}{% if member.is_origin %} <span class="pp-stack-badge pp-stack-badge--primary">Origin</span>{% endif %}</td>
+        <td>{{ member.link_date_display_msk or member.link_date or '—' }}</td>
+        <td>
+          {% if member.unit_price is not none %}{{ member.unit_price }}{% else %}—{% endif %}
+          {% if member.is_our_pp %}
+          <span class="flash ok" style="display:inline;margin-left:0.35rem;padding:0.1rem 0.35rem">Наше</span>
+          {% endif %}
+        </td>
+        <td>{{ member.trade_mark or '—' }}</td>
+        <td>{{ member.delivery_regions_count if member.delivery_regions_count is not none else '—' }}</td>
+        <td>
+          <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=member.offer_price_list_item_id) }}">Карточка</a>
+          {% if member.card_url %}
+          · <a href="{{ member.card_url }}" target="_blank" rel="noopener">РТС</a>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

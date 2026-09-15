@@ -1,0 +1,102 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Cookie и сессия</h2>
+{% if rts_profile %}
+<p class="hint">
+  Профиль РТС: <strong>{{ rts_profile }}</strong> — cookie и черновики ПП изолированы от других операторов.
+  Файл: <code>{{ paths.cookie }}</code>
+</p>
+{% else %}
+<p class="hint">
+  Войдите под учётной записью оператора (<code>IPSokolova</code> или <code>Nacpro</code>),
+  чтобы сохранять cookie в свой файл.
+</p>
+{% endif %}
+<p class="hint">
+  Войдите в <a href="https://app.rts-tender.ru" target="_blank" rel="noopener">app.rts-tender.ru</a> через браузер с ЭП,
+  затем скопируйте значение заголовка «Cookie» из DevTools (Network → любой запрос → Request Headers).
+  Вставьте сюда <strong>только текст cookie</strong>, без строки «Cookie:» или с нею — скрипт поймёт.
+</p>
+
+{% if flash_ok %}
+<div class="msg ok">{{ flash_ok }}</div>
+{% endif %}
+{% if flash_err %}
+<div class="msg err">{{ flash_err }}</div>
+{% endif %}
+
+<div class="card">
+  <h3>Пути на диске</h3>
+  <p class="hint">Файл cookie (не коммитить): <strong>{{ paths.cookie }}</strong></p>
+  <p class="hint">State: <strong>{{ paths.state }}</strong></p>
+  {% if cookie_status.file_exists %}
+  <p class="hint">
+    В файле {{ cookie_status.cookie_chars }} символов.
+    {% if cookie_status.last_updated_at_utc %}Обновлено: {{ cookie_status.last_updated_at_utc }}{% endif %}
+    {% if cookie_status.probe_ok is sameas true %} — сессия проверена OK{% elif cookie_status.probe_ok is sameas false %} — последняя проверка не прошла{% endif %}
+  </p>
+  {% endif %}
+</div>
+
+{% if cookie_ingest_enabled %}
+<div class="card">
+  <h3>Расширение RTS Cookie Bridge</h3>
+  <p class="hint">
+    Установите распакованное расширение из <code>tools/rts-cookie-bridge</code> (Chrome → режим разработчика).
+    После входа по ЭП на rts-tender.ru укажите в popup:
+  </p>
+  <ul class="hint">
+    <li>URL: <code>{{ request.url.scheme }}://{{ request.headers.get('host') }}/api/rts/cookie/save</code></li>
+    <li>Profile: <code>{{ rts_profile or 'IPSokolova или Nacpro' }}</code> (поле <code>profile</code> в JSON)</li>
+    <li>API key: значение <code>RTS_COOKIE_INGEST_KEY</code> на сервере</li>
+    <li>После первого «Сохранить cookie» с probe OK — авто-обновление каждые 90 сек (popup можно закрыть)</li>
+  </ul>
+</div>
+{% else %}
+<div class="card">
+  <h3>API приёма cookie</h3>
+  <p class="hint">Отключено: на сервере не задан <code>RTS_COOKIE_INGEST_KEY</code>.</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Кэш шаблонов КТРУ</h3>
+  <p class="hint">
+    С сервера VM поиск <code>Ktru/search</code> часто возвращает пустой <code>page</code> (cookie при этом может быть в порядке).
+    Если «Участвовать» пишет «КТРУ … недоступен в справочнике РТС» — импортируйте шаблон из браузера:
+  </p>
+  <ol class="hint">
+    <li>Войти на <a href="https://offers.rts-tender.ru" target="_blank" rel="noopener">offers.rts-tender.ru</a> по ЭП.</li>
+    <li>DevTools → Network → запрос <code>Ktru/search</code> для нужного кода.</li>
+    <li>Скопировать тело ответа (JSON) и вставить ниже.</li>
+  </ol>
+  <p class="hint">Каталог кэша: <strong>{{ paths.ktru_cache }}</strong></p>
+  <form method="post" action="{{ request.url_for('action_import_ktru_cache') }}">
+    <label for="ktru_code">Код КТРУ</label>
+    <input type="text" id="ktru_code" name="ktru_code" placeholder="32.99.12.110-00000007" autocomplete="off">
+    <label for="ktru_json">JSON Ktru/search</label>
+    <textarea id="ktru_json" name="ktru_json" rows="10" autocomplete="off" spellcheck="false" placeholder='{"page":[...]}'></textarea>
+    <button type="submit">Импортировать в кэш</button>
+  </form>
+</div>
+
+<div class="card">
+  <form method="post" action="{{ request.url_for('action_save_cookie') }}">
+    <label for="cookie_body">Строка Cookie</label>
+    <textarea id="cookie_body" name="cookie_body" rows="12" autocomplete="off" spellcheck="false" placeholder=".Auth.Sso=…; ASP.NET_SessionId=…">{{ masked_preview }}</textarea>
+    <p class="hint">{{ cookie_note }}</p>
+    <button type="submit">Сохранить cookie</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Веб-доступ (опционально)</h3>
+  <p class="hint">
+    Файл учётных записей: <code>RTS_WEB_USERS_FILE</code> (по умолчанию <strong>{{ paths.web_users }}</strong>),
+    формат строк: <code>логин:пароль</code>. Пока файл пуст или отсутствует — вход не требуется.
+  </p>
+  <p class="hint">
+    На production задайте <code>RTS_WEB_SESSION_SECRET</code> и при HTTPS — <code>RTS_WEB_HTTPS_ONLY=1</code>.
+  </p>
+</div>
+{% endblock %}

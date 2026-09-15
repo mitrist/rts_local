@@ -1,0 +1,21 @@
+# /etc/systemd/system/rts-local.service
+# Сосуществует с rts-tender.service на той же VM.
+[Unit]
+Description=RTS Local web console (rts-local.raytec-log.pro)
+After=network.target
+
+[Service]
+Type=simple
+User=mitrist12
+Group=mitrist12
+WorkingDirectory=/opt/rts_local/app
+EnvironmentFile=/etc/rts-local/service.env
+EnvironmentFile=-/etc/rts-local/eis.env
+ExecStart=/opt/rts_local/venv/bin/python -m web_ui
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGKILL
+
+[Install]
+WantedBy=multi-user.target

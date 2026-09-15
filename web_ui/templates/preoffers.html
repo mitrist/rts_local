@@ -1,0 +1,238 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Справочник предложений</h2>
+<p class="hint">
+  <a href="{{ request.url_for('page_preoffers_import') }}">Импорт из JSON RTS</a> — загрузка реестра позиций из личного кабинета поставщика.
+</p>
+
+<div class="card">
+  <h3>{{ 'Редактирование предложения' if form.offer_id else 'Добавить предложение' }}</h3>
+  <p class="hint">Характеристики вводятся построчно в формате <code>Название=Значение</code>.</p>
+  {% if preoffer_flash_ok %}<div class="msg ok">{{ preoffer_flash_ok }}</div>{% endif %}
+  {% if preoffer_flash_err %}<div class="msg err">{{ preoffer_flash_err }}</div>{% endif %}
+
+  {% if form.source_purchase_number %}
+    <div class="msg ok">Черновик создан из закупки <code>{{ form.source_purchase_number }}</code>. Проверьте значения, добавьте ссылку RTS и сохраните.</div>
+  {% endif %}
+
+  <form method="post" action="{{ request.url_for('action_preoffers_save') }}" class="preoffer-form">
+    <input type="hidden" name="offer_id" value="{{ form.offer_id }}">
+    <label>
+      <span>КТРУ</span>
+      <input name="ktru_code" value="{{ form.ktru_code }}" placeholder="08.12.12.140-00000005" required>
+    </label>
+    <label>
+      <span>Название предложения</span>
+      <input name="title" value="{{ form.title }}" placeholder="Щебень гранитный М1200 F50" required>
+    </label>
+    <label>
+      <span>SKU</span>
+      <input name="sku" value="{{ form.sku }}" placeholder="GRANIT-M1200-F50">
+    </label>
+    <label>
+      <span>Ссылка RTS</span>
+      <input name="rts_url" value="{{ form.rts_url }}" placeholder="https://...">
+    </label>
+    <label class="preoffer-enabled">
+      <input type="checkbox" name="enabled" value="1" {{ 'checked' if form.enabled else '' }}>
+      <span>Включено в подбор</span>
+    </label>
+    <label class="preoffer-characteristics">
+      <span>Характеристики</span>
+      <textarea name="characteristics_text" rows="10" placeholder="Вид=Гранитный&#10;Марка по морозостойкости=F50">{{ form.characteristics_text }}</textarea>
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Сохранить</button>
+      <a class="button secondary" href="{{ request.url_for('page_preoffers') }}">Очистить форму</a>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Предварительные предложения</h3>
+  {% if offers and offers|length > 0 %}
+  <table class="eis-table preoffers-table">
+    <thead>
+      <tr>
+        <th>КТРУ</th>
+        <th>Название</th>
+        <th>SKU / RTS</th>
+        <th>Характеристики</th>
+        <th>Статус</th>
+        <th>Действия</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for offer in offers %}
+      <tr class="{{ '' if offer.enabled else 'preoffer-disabled-row' }}">
+        <td><code>{{ offer.ktru_code }}</code></td>
+        <td>
+          <button type="button"
+                  class="preoffer-title-link preoffer-open-modal"
+                  data-preoffer='{{ offer | tojson }}'>
+            {{ offer.title or '—' }}
+          </button>
+        </td>
+        <td>
+          {{ offer.sku or '—' }}
+          {% if offer.rts_url %}<div class="hint"><a href="{{ offer.rts_url }}" target="_blank" rel="noopener">RTS</a></div>{% endif %}
+        </td>
+        <td>
+          {{ offer.characteristics|length }}
+          {% if offer.characteristics and offer.characteristics|length > 0 %}
+            <div class="hint">{{ offer.characteristics[0].label }}={{ offer.characteristics[0].value }}</div>
+          {% endif %}
+        </td>
+        <td>{{ 'включено' if offer.enabled else 'отключено' }}</td>
+        <td class="preoffer-actions-cell">
+          <a class="button secondary" href="{{ request.url_for('page_preoffers') }}?edit_offer_id={{ offer.offer_id }}">Редактировать</a>
+          {% if offer.enabled %}
+          <form method="post" action="{{ request.url_for('action_preoffers_disable') }}" class="eis-inline-form">
+            <input type="hidden" name="offer_id" value="{{ offer.offer_id }}">
+            <button type="submit" class="secondary">Отключить</button>
+          </form>
+          {% endif %}
+          <form method="post"
+                action="{{ request.url_for('action_preoffers_delete') }}"
+                class="eis-inline-form"
+                onsubmit="return confirm('Удалить предложение «{{ offer.title|e }}» из справочника?');">
+            <input type="hidden" name="offer_id" value="{{ offer.offer_id }}">
+            <button type="submit" class="secondary preoffer-delete-btn">Удалить</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">В справочнике пока нет предложений.</p>
+  {% endif %}
+</div>
+
+<div id="preoffer-modal" class="eis-modal" hidden aria-hidden="true">
+  <div class="eis-modal-backdrop" data-preoffer-modal-close tabindex="-1"></div>
+  <div class="eis-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="preoffer-modal-heading">
+    <div class="eis-modal-toolbar">
+      <button type="button" class="eis-modal-close" data-preoffer-modal-close aria-label="Закрыть">×</button>
+    </div>
+    <h4 id="preoffer-modal-heading" class="eis-modal-heading">Предварительное предложение</h4>
+    <p id="preoffer-modal-title" class="eis-modal-position"></p>
+    <dl class="eis-modal-meta">
+      <div><dt>Код КТРУ</dt><dd id="preoffer-modal-ktru">—</dd></div>
+      <div><dt>SKU</dt><dd id="preoffer-modal-sku">—</dd></div>
+      <div><dt>Статус</dt><dd id="preoffer-modal-status">—</dd></div>
+      <div><dt>Ссылка RTS</dt><dd id="preoffer-modal-rts">—</dd></div>
+    </dl>
+    <h5 class="preoffer-modal-chars-heading">Характеристики</h5>
+    <div class="eis-modal-table-wrap">
+      <table class="eis-table eis-cmp-table" id="preoffer-modal-chars">
+        <thead>
+          <tr>
+            <th>Параметр</th>
+            <th>Значение</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="preoffer-modal-empty" class="hint" hidden>Характеристики не заданы.</p>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  (function () {
+    var modal = document.getElementById("preoffer-modal");
+    if (!modal) return;
+    var titleEl = document.getElementById("preoffer-modal-title");
+    var ktruEl = document.getElementById("preoffer-modal-ktru");
+    var skuEl = document.getElementById("preoffer-modal-sku");
+    var statusEl = document.getElementById("preoffer-modal-status");
+    var rtsEl = document.getElementById("preoffer-modal-rts");
+    var table = document.getElementById("preoffer-modal-chars");
+    var tbody = table ? table.querySelector("tbody") : null;
+    var emptyEl = document.getElementById("preoffer-modal-empty");
+
+    function setText(el, text) {
+      if (el) el.textContent = text || "—";
+    }
+
+    function openModal() {
+      modal.removeAttribute("hidden");
+      modal.setAttribute("aria-hidden", "false");
+      document.documentElement.style.overflow = "hidden";
+    }
+
+    function closeModal() {
+      modal.setAttribute("hidden", "");
+      modal.setAttribute("aria-hidden", "true");
+      document.documentElement.style.overflow = "";
+    }
+
+    modal.querySelectorAll("[data-preoffer-modal-close]").forEach(function (el) {
+      el.addEventListener("click", closeModal);
+    });
+
+    document.addEventListener("keydown", function (ev) {
+      if (ev.key === "Escape" && modal.getAttribute("aria-hidden") === "false") {
+        closeModal();
+      }
+    });
+
+    function renderOffer(offer) {
+      if (!offer) return;
+      setText(titleEl, offer.title);
+      setText(ktruEl, offer.ktru_code);
+      setText(skuEl, offer.sku);
+      setText(statusEl, offer.enabled ? "включено в подбор" : "отключено");
+      if (rtsEl) {
+        rtsEl.textContent = "";
+        if (offer.rts_url) {
+          var link = document.createElement("a");
+          link.href = offer.rts_url;
+          link.target = "_blank";
+          link.rel = "noopener";
+          link.textContent = "Открыть RTS";
+          rtsEl.appendChild(link);
+        } else {
+          rtsEl.textContent = "—";
+        }
+      }
+      var chars = offer.characteristics || [];
+      if (tbody) {
+        tbody.innerHTML = "";
+        chars.forEach(function (ch) {
+          var tr = document.createElement("tr");
+          var tdLabel = document.createElement("td");
+          var tdVal = document.createElement("td");
+          tdLabel.textContent = ch.label || ch.match_key || "—";
+          tdVal.textContent = ch.value || "—";
+          tr.appendChild(tdLabel);
+          tr.appendChild(tdVal);
+          tbody.appendChild(tr);
+        });
+      }
+      var hasChars = chars.length > 0;
+      if (table) table.hidden = !hasChars;
+      if (emptyEl) emptyEl.hidden = hasChars;
+    }
+
+    document.querySelectorAll(".preoffer-open-modal").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        var raw = btn.getAttribute("data-preoffer");
+        if (!raw) {
+          window.alert("Не удалось открыть карточку предложения.");
+          return;
+        }
+        try {
+          renderOffer(JSON.parse(raw));
+          openModal();
+        } catch (e) {
+          window.alert("Не удалось открыть карточку предложения.");
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,17 @@
+# Таймер опроса реестра ПП. OnUnitActiveSec должен совпадать с poll_interval_min
+# в настройках монитора (например 8min при poll_interval_min=8).
+#
+#   sudo systemctl enable --now rts-pp-monitor-poll.timer
+#   systemctl list-timers rts-pp-monitor-poll.timer
+
+[Unit]
+Description=Poll RTS PP registry on configured interval
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=8min
+AccuracySec=30s
+Unit=rts-pp-monitor-poll.service
+
+[Install]
+WantedBy=timers.target

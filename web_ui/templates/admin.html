@@ -1,0 +1,388 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Админка</h2>
+<p class="hint">Доступ только администраторам (<code>RTS_SETTINGS_ADMIN_USERS</code>). Блоки свёрнуты — раскройте нужный раздел.</p>
+
+{% if admin_flash_ok %}<div class="msg ok">{{ admin_flash_ok }}</div>{% endif %}
+{% if admin_flash_err %}<div class="msg err">{{ admin_flash_err }}</div>{% endif %}
+
+<details class="admin-section card">
+  <summary class="admin-section-summary">Страна происхождения <span class="admin-section-meta">{{ country_rows|length }} строк</span></summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Справочник для подстановки страны в черновик ПП.
+      Файл: <code>{{ paths.country_origin }}</code>
+    </p>
+
+    <h4>{{ 'Редактирование строки' if country_form.row_id else 'Добавить строку' }}</h4>
+    <form method="post" action="{{ request.url_for('action_admin_country_origin_save') }}" class="preoffer-form">
+      <input type="hidden" name="row_id" value="{{ country_form.row_id }}">
+      <label>
+        <span>КТРУ</span>
+        <input name="ktru_code" value="{{ country_form.ktru_code }}" placeholder="26.20.16.120-00000104" autocomplete="off">
+      </label>
+      <label>
+        <span>Наименование</span>
+        <input name="title" value="{{ country_form.title }}" placeholder="3D-принтер FDM" required autocomplete="off">
+      </label>
+      <label>
+        <span>Страна происхождения</span>
+        <select name="country_name" required>
+          {% for code, name in country_choices %}
+          <option value="{{ name }}" {{ 'selected' if country_form.country_name == name else '' }}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="enabled" value="1" {{ 'checked' if country_form.enabled else '' }}>
+        <span>Использовать эту строку</span>
+      </label>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить</button>
+        <a class="button secondary" href="{{ request.url_for('page_admin') }}">Очистить форму</a>
+      </div>
+    </form>
+
+    {% if country_rows and country_rows|length > 0 %}
+    <table class="eis-table preoffers-table admin-section-table">
+      <thead>
+        <tr>
+          <th>КТРУ</th>
+          <th>Наименование</th>
+          <th>Страна</th>
+          <th>Исп.</th>
+          <th>Действия</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in country_rows %}
+        <tr class="{{ '' if row.enabled else 'preoffer-disabled-row' }}">
+          <td>{% if row.ktru_code %}<code>{{ row.ktru_code }}</code>{% else %}<span class="hint">—</span>{% endif %}</td>
+          <td>{{ row.title }}</td>
+          <td>{{ row.country_name }}</td>
+          <td>{{ 'Да' if row.enabled else 'Нет' }}</td>
+          <td>
+            <a href="{{ request.url_for('page_admin') }}?edit_row_id={{ row.row_id }}">Изменить</a>
+            <form method="post" action="{{ request.url_for('action_admin_country_origin_delete') }}" class="eis-inline-form" onsubmit="return confirm('Удалить строку?');">
+              <input type="hidden" name="row_id" value="{{ row.row_id }}">
+              <button type="submit">Удалить</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="hint">Справочник пуст.</p>
+    {% endif %}
+  </div>
+</details>
+
+<details class="admin-section card">
+  <summary class="admin-section-summary">
+    Кэш шаблонов КТРУ
+    <span class="admin-section-meta">{{ ktru_cache_rows|length }} файлов{% if ktru_cache_expired_count %}, просрочено {{ ktru_cache_expired_count }}{% endif %}</span>
+  </summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Срок действия для создания черновиков ПП: <strong>{{ ktru_cache_ttl_days }} дн.</strong>
+      (отметка <code>_cache_meta.cached_at_unix</code>).
+      Каталог: <code>{{ paths.ktru_cache }}</code>.
+      Импорт JSON — на странице <a href="{{ request.url_for('page_session') }}">Cookie / сессия</a>.
+    </p>
+
+    {% if ktru_cache_rows and ktru_cache_rows|length > 0 %}
+    <div class="eis-submit-row">
+      <form method="post" action="{{ request.url_for('action_admin_ktru_cache_extend_all') }}" class="eis-inline-form" onsubmit="return confirm('Продлить все {{ ktru_cache_rows|length }} файлов кэша на 7 дней?');">
+        <button type="submit">Продлить все на 7 дней</button>
+      </form>
+    </div>
+    <table class="eis-table admin-section-table ktru-cache-table">
+      <thead>
+        <tr>
+          <th>КТРУ</th>
+          <th>Наименование</th>
+          <th>Кэширован</th>
+          <th>Истекает</th>
+          <th>Осталось</th>
+          <th>Действие</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in ktru_cache_rows %}
+        <tr class="{{ 'ktru-cache-expired-row' if row.expired else '' }}">
+          <td><code>{{ row.ktru_code }}</code></td>
+          <td>{{ row.name or '—' }}</td>
+          <td>{{ row.cached_at_utc or '—' }} UTC</td>
+          <td>{{ row.expires_at_utc or '—' }} UTC</td>
+          <td>
+            {% if row.days_remaining is not none %}
+              {% if row.expired %}
+                <span class="ktru-cache-expired">просрочен {{ (-row.days_remaining)|round(1) }} дн.</span>
+              {% else %}
+                {{ row.days_remaining }} дн.
+              {% endif %}
+            {% else %}
+              <span class="hint">нет даты</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ request.url_for('action_admin_ktru_cache_extend') }}" class="eis-inline-form">
+              <input type="hidden" name="ktru_code" value="{{ row.ktru_code }}">
+              <button type="submit">+7 дней</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="hint">Кэш пуст — импортируйте JSON Ktru/search или загрузите шаблон через API.</p>
+    {% endif %}
+  </div>
+</details>
+
+<details class="admin-section card">
+  <summary class="admin-section-summary">Уведомления: извещения о закупке</summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Каналы для «Новая закупка» (подбор по справочнику предложений: {{ notices_catalog_count }} включённых КТРУ).
+      Файл: <code>{{ paths.notification_settings }}</code>.
+      Токены бота — в <code>{{ paths.eis_env }}</code>; пустой chat id ниже = значение из env
+      {% if default_tg_chat %}(Telegram: <code>{{ default_tg_chat }}</code>{% endif %}
+      {% if default_max_chat %}{% if default_tg_chat %}, {% endif %}MAX: <code>{{ default_max_chat }}</code>{% endif %}).
+    </p>
+    <form method="post" action="{{ request.url_for('action_admin_notices_notify_save') }}" class="preoffer-form">
+      <label>
+        <span>Telegram chat id</span>
+        <input name="telegram_chat_id" value="{{ notices_form.telegram_chat_id }}" placeholder="{{ default_tg_chat or '-100…' }}" autocomplete="off">
+      </label>
+      <label>
+        <span>MAX chat id</span>
+        <input name="max_chat_id" value="{{ notices_form.max_chat_id }}" placeholder="{{ default_max_chat or '…' }}" autocomplete="off">
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="notify_telegram" value="1" {{ 'checked' if notices_form.notify_telegram else '' }}>
+        <span>Отправлять в Telegram</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="notify_max" value="1" {{ 'checked' if notices_form.notify_max else '' }}>
+        <span>Отправлять в MAX</span>
+      </label>
+      <label>
+        <span>Сумма позиции от, ₽</span>
+        <input type="text" name="min_purchase_amount" value="{{ notices_form.min_purchase_amount }}" inputmode="decimal" autocomplete="off">
+      </label>
+      <label>
+        <span>Сумма позиции до, ₽</span>
+        <input type="text" name="max_purchase_amount" value="{{ notices_form.max_purchase_amount }}" inputmode="decimal" autocomplete="off">
+      </label>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="admin-section card" id="pp-monitor-runtime">
+  <summary class="admin-section-summary">
+    Настройка монитора ПП
+    <span class="admin-section-meta">
+      {% if pp_monitor_runtime.enabled %}включён{% else %}выключен{% endif %},
+      {{ pp_monitor_runtime.poll_interval_min }} мин
+    </span>
+  </summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Управление автоматическим опросом реестра ПП.
+      Файл: <code>{{ paths.pp_monitor_settings }}</code>.
+      Cron: {% if pp_monitor_cron_status.cron_mode %}включён{% else %}выключен{% endif %}
+      (env <code>RTS_PP_MONITOR_CRON</code>).
+      Env-монитор: {% if env_pp_monitor_enabled %}включён{% else %}выключен{% endif %}
+      (<code>RTS_PP_MONITOR</code> — должен быть 1 на сервере).
+      Журнал и ручной опрос — на странице
+      <a href="{{ request.url_for('page_rts_pp_monitor') }}">Монитор ПП РТС</a>.
+    </p>
+    <p class="hint">
+      Фактически активен:
+      {% if pp_monitor_cron_status.enabled %}
+        <strong>да</strong>{% if pp_monitor_cron_status.polling %}, идёт опрос…{% elif pp_monitor_cron_status.seconds_until_next is not none %}, следующий через ~{{ pp_monitor_cron_status.seconds_until_next // 60 }} мин{% endif %}
+      {% else %}
+        <strong>нет</strong>{% if pp_monitor_runtime.enabled and not env_pp_monitor_enabled %} (выключен в env){% elif not pp_monitor_runtime.enabled %} (выключен в настройках){% endif %}
+      {% endif %}
+    </p>
+
+    <div class="eis-submit-row">
+      {% if pp_monitor_runtime.enabled %}
+      <form method="post" action="{{ request.url_for('action_admin_pp_monitor_toggle') }}" class="eis-inline-form">
+        <input type="hidden" name="enabled" value="0">
+        <button type="submit">Выключить монитор</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ request.url_for('action_admin_pp_monitor_toggle') }}" class="eis-inline-form">
+        <input type="hidden" name="enabled" value="1">
+        <button type="submit">Включить монитор</button>
+      </form>
+      {% endif %}
+    </div>
+
+    <form method="post" action="{{ request.url_for('action_admin_pp_monitor_interval_save') }}" class="preoffer-form" style="margin-top:0.75rem">
+      <label>
+        <span>Периодичность опроса, мин (5–120)</span>
+        <input type="number" name="poll_interval_min" value="{{ pp_monitor_runtime.poll_interval_min }}" min="5" max="120" required>
+      </label>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить периодичность</button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="admin-section card" id="auto-participate-runtime">
+  <summary class="admin-section-summary">
+    Настройка автоучастия
+    <span class="admin-section-meta">
+      {% if auto_participate_global_enabled %}включено{% else %}выключено{% endif %},
+      {{ auto_participate_enabled_profiles }}/{{ auto_participate_profiles_total }} профилей
+    </span>
+  </summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Глобальный переключатель автоучастия для всех supplier-профилей.
+      Файл: <code>{{ paths.auto_participate_settings }}</code>.
+      Env: {% if env_auto_participate_enabled %}включён{% else %}выключен{% endif %}
+      (<code>RTS_AUTO_PARTICIPATE</code> — должен быть 1 на сервере).
+      Правила по профилям — на странице
+      <a href="{{ request.url_for('page_auto_participate') }}">Авто-участие</a>.
+    </p>
+    <p class="hint">
+      Фактически активно:
+      {% if auto_participate_global_enabled and env_auto_participate_enabled %}
+        <strong>да</strong> ({{ auto_participate_enabled_profiles }} профилей с включёнными правилами)
+      {% else %}
+        <strong>нет</strong>{% if not env_auto_participate_enabled %} (выключено в env){% elif not auto_participate_global_enabled %} (выключено в настройках){% endif %}
+      {% endif %}
+    </p>
+
+    <div class="eis-submit-row">
+      {% if auto_participate_global_enabled %}
+      <form method="post" action="{{ request.url_for('action_admin_auto_participate_toggle') }}" class="eis-inline-form">
+        <input type="hidden" name="enabled" value="0">
+        <button type="submit">Выключить для всех профилей</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ request.url_for('action_admin_auto_participate_toggle') }}" class="eis-inline-form">
+        <input type="hidden" name="enabled" value="1">
+        <button type="submit">Включить для всех профилей</button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+</details>
+
+<details class="admin-section card">
+  <summary class="admin-section-summary">Уведомления: монитор ПП РТС</summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Отдельные chat id для «Новое ПП конкурента». Управление опросом и журнал — на странице
+      <a href="{{ request.url_for('page_rts_pp_monitor') }}">Монитор ПП РТС</a>.
+      Файл: <code>{{ paths.pp_monitor_settings }}</code>.
+    </p>
+    <form method="post" action="{{ request.url_for('action_admin_pp_monitor_notify_save') }}" class="preoffer-form">
+      <label>
+        <span>Telegram chat id</span>
+        <input name="telegram_chat_id" value="{{ pp_monitor_form.telegram_chat_id }}" placeholder="{{ default_tg_chat or '-100…' }}" autocomplete="off">
+      </label>
+      <label>
+        <span>MAX chat id</span>
+        <input name="max_chat_id" value="{{ pp_monitor_form.max_chat_id }}" placeholder="{{ default_max_chat or '…' }}" autocomplete="off">
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="notify_telegram" value="1" {{ 'checked' if pp_monitor_form.notify_telegram else '' }}>
+        <span>Отправлять в Telegram</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="notify_max" value="1" {{ 'checked' if pp_monitor_form.notify_max else '' }}>
+        <span>Отправлять в MAX</span>
+      </label>
+      <label>
+        <span>Коды КТРУ для монитора (по строке)</span>
+        <textarea name="ktru_codes_text" rows="6" spellcheck="false">{{ pp_monitor_form.ktru_codes_text }}</textarea>
+      </label>
+      <label>
+        <span>Цена от, ₽</span>
+        <input type="text" name="price_min" value="{{ pp_monitor_form.price_min }}" inputmode="decimal" autocomplete="off">
+      </label>
+      <label>
+        <span>Цена до, ₽</span>
+        <input type="text" name="price_max" value="{{ pp_monitor_form.price_max }}" inputmode="decimal" autocomplete="off">
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="skip_expired" value="1" {{ 'checked' if pp_monitor_form.skip_expired else '' }}>
+        <span>Не уведомлять о просроченных ПП</span>
+      </label>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="admin-section card">
+  <summary class="admin-section-summary">Web users <span class="admin-section-meta">{{ web_users|length }} учёток</span></summary>
+  <div class="admin-section-body">
+    <p class="hint">Файл: <code>{{ paths.web_users }}</code>. Логин = профиль РТС (cookie и черновики).</p>
+
+    <h4>{{ 'Сменить пароль' if web_user_form.login else 'Добавить пользователя' }}</h4>
+    <form method="post" action="{{ request.url_for('action_admin_web_user_save') }}" class="preoffer-form">
+      <label>
+        <span>Логин</span>
+        <input name="login" value="{{ web_user_form.login }}" required autocomplete="off" {{ 'readonly' if web_user_form.login else '' }}>
+      </label>
+      <label>
+        <span>Пароль</span>
+        <input type="password" name="password" value="" autocomplete="new-password" {% if not web_user_form.login %}required{% endif %} placeholder="{{ 'новый пароль' if web_user_form.login else '' }}">
+      </label>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить</button>
+        <a class="button secondary" href="{{ request.url_for('page_admin') }}">Очистить</a>
+      </div>
+    </form>
+
+    {% if web_users and web_users|length > 0 %}
+    <table class="eis-table admin-section-table">
+      <thead>
+        <tr><th>Логин</th><th>Действия</th></tr>
+      </thead>
+      <tbody>
+        {% for name in web_users %}
+        <tr>
+          <td><code>{{ name }}</code>{% if name == web_user %} <span class="hint">(вы)</span>{% endif %}</td>
+          <td>
+            <a href="{{ request.url_for('page_admin') }}?edit_user={{ name }}">Пароль</a>
+            {% if name != web_user %}
+            <form method="post" action="{{ request.url_for('action_admin_web_user_delete') }}" class="eis-inline-form" onsubmit="return confirm('Удалить пользователя {{ name }}?');">
+              <input type="hidden" name="login" value="{{ name }}">
+              <button type="submit">Удалить</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</details>
+
+{% if edit_row_id or edit_user %}
+<script>
+  document.querySelectorAll('.admin-section').forEach(function(el) {
+    var open = false;
+    if ({{ 'true' if edit_row_id else 'false' }} && el.querySelector('[name="title"]')) open = true;
+    if ({{ 'true' if edit_user else 'false' }} && el.querySelector('[name="login"]')) open = true;
+    if (open) el.open = true;
+  });
+</script>
+{% endif %}
+{% endblock %}

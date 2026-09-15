@@ -1,0 +1,598 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Приглашения (IncomingInvite)</h2>
+<p class="hint">
+  Опрос jqGrid ЛК РТС-тендер с cookie, сохранённым на странице «Cookie / сессия».
+  Вход по ЭП выполняется вручную в браузере — затем обновите cookie.
+</p>
+
+{% if flash_ok %}
+<div class="msg ok">{{ flash_ok }}</div>
+{% endif %}
+{% if flash_err %}
+<div class="msg err">{{ flash_err }}</div>
+{% endif %}
+
+<div class="card">
+  <h3>Состояние</h3>
+  <p class="hint">
+    Cookie файл: <strong>{{ paths.cookie }}</strong>
+    {% if cookie_exists %}
+      <span class="badge" style="margin-left: 0.35rem">есть</span>
+    {% else %}
+      <span class="badge" style="margin-left: 0.35rem; color: var(--warn);">нет файла</span>
+    {% endif %}
+  </p>
+  <p class="hint">
+    Учтённых приглашений (state): <strong>{{ state_count }}</strong>
+    {% if state_updated %}<br>Обновлёно state: {{ state_updated }}{% endif %}
+  </p>
+  {% if last_poll %}
+  <p class="hint">
+    Последний опрос (UTC): {{ last_poll.at }} —
+    {% if last_poll.ok %}успех{% else %}ошибка{% endif %}
+    {% if last_poll.error %}<br><code>{{ last_poll.error }}</code>{% endif %}
+    <br>records: {{ last_poll.records_total }}, загружено: {{ last_poll.fetched_count }},
+    новых: {{ last_poll.new_count }}
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Запустить опрос</h3>
+  <form method="post" action="{{ request.url_for('action_poll') }}">
+    <div class="row">
+      <div>
+        <label for="days_window">Окно дат, дней назад</label>
+        <input type="number" name="days_window" id="days_window" value="{{ form_days }}" min="1" max="365">
+      </div>
+      <div>
+        <label for="rows_per_page">Строк на страницу</label>
+        <input type="number" name="rows_per_page" id="rows_per_page" value="{{ form_rows }}" min="10" max="200">
+      </div>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="enrich" id="enrich" value="1" {% if form_enrich %}checked{% endif %}>
+      <label for="enrich">Обогащение (HTML письма → номер извещения)</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="lot_items" id="lot_items" value="1" {% if form_lot_items %}checked{% endif %}>
+      <label for="lot_items">Позиции лота и КТРУ (ссылка Trade/View в письме → lot-items/search/paged; включает обогащение)</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="no_notify" id="no_notify" value="1" {% if form_no_notify %}checked{% endif %}>
+      <label for="no_notify">Не слать Telegram / webhook / ingest (только обновление state)</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="dry_run" id="dry_run" value="1" {% if form_dry_run %}checked{% endif %}>
+      <label for="dry_run">Dry-run (не сохранять state)</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="print_all" id="print_all" value="1" {% if form_print_all %}checked{% endif %}>
+      <label for="print_all">Вывести все строки jqGrid в лог ниже</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="fetch_bodies" id="fetch_bodies" value="1" {% if form_fetch_bodies %}checked{% endif %}>
+      <label for="fetch_bodies">Загрузить текст всех писем (MessageView, по одному запросу на строку)</label>
+    </div>
+    <button type="submit">Опросить площадку</button>
+  </form>
+</div>
+
+{% if eis_flash_ok %}
+<div class="msg ok">{{ eis_flash_ok }}</div>
+{% endif %}
+{% if eis_flash_err %}
+<div class="msg err">{{ eis_flash_err }}</div>
+{% endif %}
+
+<div class="card" id="eis-poll">
+  <h3>ЕИС: поллер getDocsIP (регион + ЭЗТ + КТРУ)</h3>
+  <p class="hint">
+    Токен ЕРУЗ: файл <strong>{{ paths.eis_env }}</strong>
+    {% if eis_env_exists %}<span class="badge" style="margin-left:0.35rem">есть</span>{% else %}<span class="badge" style="margin-left:0.35rem;color:var(--warn)">нет</span>{% endif %}
+    — в этом же файле для сводки КТРУ в Telegram: строки <code>telegram_bot=...</code> и <code>telegram_chat_id=...</code> (или переменные <code>TELEGRAM_BOT_TOKEN</code>, <code>TELEGRAM_CHAT_ID</code>).
+    · State: <strong>{{ paths.eis_state }}</strong> — учтено закупок: <strong>{{ eis_state_count }}</strong>
+    <br>Файл журнала (новые позиции КТРУ, метрики): <code>{{ eis_changelog_path }}</code>
+    {% if eis_schedule_enabled %}
+    <br><strong>Плановый опрос через ENV включён</strong> — интервал {{ eis_schedule_interval_sec }} с (<code>EIS_SCHEDULE_POLL=1</code> и задан <code>EIS_SCHEDULE_ORG_REGION</code>). Пока активна задача из кнопки ниже, она имеет приоритет.
+    {% endif %}
+    {% if eis_ui_cron_enabled %}
+    <br><strong>Регулярный опрос из веба включён</strong> — каждые {{ eis_ui_cron_interval_sec }} с, регион <code>35</code>, тип <code>epNotificationEZT2020</code>, дата сегодня, КТРУ без фильтра.
+    {% endif %}
+    <br>В Telegram из env.txt уходит только при появлении <strong>новых</strong> позиций КТРУ (первая фиксация пары закупка+код). Ручной отчёт: <code>last_eis_poll.json</code>.
+    <br>SQLite-аналитика: <code>{{ eis_analytics_db_path }}</code>
+  </p>
+
+  <form method="post" action="{{ request.url_for('action_eis_poll') }}">
+    <div class="row">
+      <div>
+        <label for="eis_org_region">Регион заказчика (orgRegion)</label>
+        <input type="text" name="eis_org_region" id="eis_org_region" value="{{ eis_org_region_default }}" placeholder="72" required maxlength="8">
+      </div>
+      <div>
+        <label for="eis_document_type44">documentType44</label>
+        <input type="text" name="eis_document_type44" id="eis_document_type44" value="{{ eis_document_type_default }}" maxlength="80">
+      </div>
+    </div>
+    <div class="row">
+      <div>
+        <label for="eis_ktru">КТРУ (префиксы через запятую)</label>
+        <input type="text" name="eis_ktru" id="eis_ktru" value="{{ eis_ktru_default }}" placeholder="32.97.11.160-00000001">
+      </div>
+      <div>
+        <label for="eis_date">Дата exactDate (YYYY-MM-DD; пусто — сегодня)</label>
+        <input type="text" name="eis_date" id="eis_date" value="{{ eis_date_default }}" placeholder="">
+      </div>
+      <div>
+        <label for="eis_timeout">Таймаут HTTP, сек</label>
+        <input type="number" name="eis_timeout" id="eis_timeout" value="120" min="30" max="900">
+      </div>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="eis_dry_run" id="eis_dry_run" value="1" {% if form_eis_dry_run %}checked{% endif %}>
+      <label for="eis_dry_run">Dry-run (не писать state ЕИС)</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="eis_require_ezt_xml" id="eis_require_ezt_xml" value="1" {% if form_eis_require_ezt %}checked{% endif %}>
+      <label for="eis_require_ezt_xml">Только XML с маркерами ЭЗТ</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="eis_notify_telegram" id="eis_notify_telegram" value="1" {% if form_eis_notify_tg %}checked{% endif %}>
+      <label for="eis_notify_telegram">Также отправить в Telegram</label>
+    </div>
+    <div class="chk">
+      <input type="checkbox" name="eis_no_verify" id="eis_no_verify" value="1" {% if form_eis_no_verify %}checked{% endif %}>
+      <label for="eis_no_verify">TLS без проверки сертификата</label>
+    </div>
+    <div class="eis-submit-row">
+      <button type="submit">Запросить архивы ЕИС</button>
+    </div>
+  </form>
+
+  <div class="eis-submit-row eis-submit-row-follow">
+    <form method="post" action="{{ request.url_for('action_eis_cron_start') }}" class="eis-inline-form">
+      <button type="submit">Запустить cron задачу</button>
+    </form>
+    <form method="post" action="{{ request.url_for('action_eis_cron_stop') }}" class="eis-inline-form">
+      <button type="submit" id="eis-cron-stop-btn">Остановить cron</button>
+    </form>
+    <span id="eis-cron-countdown" class="eis-cron-countdown hint" aria-live="polite">—</span>
+  </div>
+
+  {% if eis_changelog_rows and eis_changelog_rows|length > 0 %}
+  <h4 class="eis-subtitle">Журнал новых позиций КТРУ (тест)</h4>
+  <p class="hint">Записывается при первом обнаружении пары «закупка + КТРУ»; задержка Δ = время обработки у нас − время публикации в документе (если дата в XML разобрана). В колонках — «чистое» московское время без <code>+03:00</code>. Сортировка по дате публикации — клик по заголовку столбца. Код <strong>КТРУ</strong> — ссылка: открывает сравнение характеристик (XML последней выгрузки ЕИС и профиль поставщика).</p>
+  <table class="eis-table" id="eis-changelog-table">
+    <thead>
+      <tr>
+        <th>КТРУ</th>
+        <th>Номер закупки</th>
+        <th>Кол-во параметров</th>
+        <th>Сумма извещения</th>
+        <th class="eis-sortable-th" tabindex="0" role="columnheader"
+            aria-label="Публикация, сортировка по возрастанию или убыванию" id="eis-th-publish"
+            aria-sort="none">Публикация (ЕИС/ЭТП) <span class="eis-sort-ind" aria-hidden="true"></span></th>
+        <th>Время обработки (МСК)</th>
+        <th>Δ, сек</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in eis_changelog_rows %}
+      <tr class="{% if row.is_latest_eis_new %}eis-new-row{% endif %}">
+        <td>
+          <a href="#" class="eis-ktru-compare-link"
+             {% if row.customer_line_key %}data-customer-line-key="{{ row.customer_line_key|string|trim|e }}" {% endif %}data-purchase-number="{{ row.purchase_number|string|trim|e }}"
+             data-ktru="{{ row.ktru|string|trim|e }}"
+             {% set _cust_prev = row.customer_organization_display|default('', true)|trim|replace('\r\n', '\n')|replace('\n', ' · ') %}
+             data-journal-customer="{{ _cust_prev|e }}"
+             data-journal-notice-total="{{ row.notice_total_display|default('', true)|trim|e }}"><code>{{ row.ktru }}</code></a>
+        </td>
+        <td>{{ row.purchase_number }}</td>
+        <td>{% if row.characteristics_param_count is not none %}{{ row.characteristics_param_count }}{% else %}—{% endif %}</td>
+        <td>{% if row.notice_total_display %}{{ row.notice_total_display }}{% else %}—{% endif %}</td>
+        <td data-publish-sort="{{ row.publish_sort_key|e }}">{{ row.publish_display_msk }} <span class="hint">{{ row.publish_source }}</span></td>
+        <td>{{ row.received_display_msk }}</td>
+        <td>{% if row.latency_seconds is not none %}{{ row.latency_seconds|round(3) }}{% else %}—{% endif %}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+
+  {% if last_eis_poll %}
+  <h4 class="eis-subtitle">Последний опрос (отчёт)</h4>
+  <p class="hint">Момент завершения (МСК): {{ last_eis_poll.at|utc_iso_web }}
+    {% if last_eis_poll.ok is defined %} · {% if last_eis_poll.ok %}успех{% else %}ошибки{% endif %}{% endif %}
+    {% if last_eis_poll.meta %}<br>
+    Регион {{ last_eis_poll.meta.org_region }}, тип {{ last_eis_poll.meta.document_type_44 }},
+    архивов {{ last_eis_poll.meta.zips_downloaded }}{%
+      if last_eis_poll.meta.found_filtered is defined %} · по фильтру КТРУ в выдаче: {{ last_eis_poll.meta.found_filtered }}{% endif %},
+      впервые в&nbsp;state: {{ last_eis_poll.meta.new_filtered }}{%
+      if last_eis_poll.meta.incremental_new_ktru is defined %}, новых позиций КТРУ в этом проходе: {{ last_eis_poll.meta.incremental_new_ktru }}{% endif %}
+    {% endif %}
+  </p>
+  {% if last_eis_poll.errors %}
+  <div class="msg err" style="margin-top:0.5rem">
+    {% for err in last_eis_poll.errors %}<div>{{ err }}</div>{% endfor %}
+  </div>
+  {% endif %}
+  {% if last_eis_poll.log %}
+  <h4 class="eis-subtitle">Лог последнего опроса</h4>
+  <pre class="log">{{ last_eis_poll.log }}</pre>
+  {% endif %}
+  {% elif not eis_changelog_rows or eis_changelog_rows|length == 0 %}
+  <p class="hint" style="margin-top:1rem">Ещё не было запросов к ЕИС или журнал пуст.</p>
+  {% endif %}
+
+  <div id="eis-ktru-modal" class="eis-modal" hidden aria-hidden="true">
+    <div class="eis-modal-backdrop" data-eis-modal-close tabindex="-1"></div>
+    <div class="eis-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="eis-modal-heading">
+      <div class="eis-modal-toolbar">
+        <button type="button" class="eis-modal-close" data-eis-modal-close aria-label="Закрыть">×</button>
+      </div>
+      <h4 id="eis-modal-heading" class="eis-modal-heading">Сравнение характеристик КТРУ</h4>
+      <p id="eis-modal-position" class="eis-modal-position"></p>
+      <div class="eis-modal-customer-block">
+        <div class="eis-modal-customer-label">Наименование заказчика (название, ИНН, адрес поставки)</div>
+        <div id="eis-modal-customer-org" class="eis-modal-customer-org">—</div>
+      </div>
+      <dl class="eis-modal-meta">
+        <div><dt>Извещение / закупка</dt><dd id="eis-modal-purchase">—</dd></div>
+        <div><dt>Код КТРУ</dt><dd id="eis-modal-ktru">—</dd></div>
+        <div><dt>Цена за единицу</dt><dd id="eis-modal-price-unit">—</dd></div>
+        <div><dt>Общая сумма по извещению (НМЦК)</dt><dd id="eis-modal-notice-total">—</dd></div>
+      </dl>
+      <div class="eis-modal-table-wrap">
+        <table class="eis-table eis-cmp-table" id="eis-modal-cmp-table">
+          <thead>
+            <tr>
+              <th>Характеристика</th>
+              <th>Заказчик (ЕИС)</th>
+              <th>Профиль поставщика</th>
+              <th>Статус</th>
+            </tr>
+          </thead>
+          <tbody id="eis-modal-cmp-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+{% if invite_bodies_at is not none %}
+<div class="card invite-bodies-card">
+  <h3>Тексты уведомлений</h3>
+  <p class="hint">Загружено при опросе с включённой галочкой «текст всех писем». Время (UTC): <strong>{{ invite_bodies_at }}</strong> · в интерфейсе писем: <strong>{{ invite_bodies|length }}</strong>{% if invite_jqgrid_records is not none %} · jqGrid records: <strong>{{ invite_jqgrid_records }}</strong>{% endif %}{% if invite_parsed_rows is not none %} · разобрано строк: <strong>{{ invite_parsed_rows }}</strong>{% endif %}</p>
+  {% if invite_bodies %}
+  <div class="invite-bodies-list">
+    {% for m in invite_bodies %}
+    <details class="invite-mail">
+      <summary class="invite-mail-summary">
+        <span class="invite-chevron" aria-hidden="true"></span>
+        <span class="invite-summary-text">
+          <span class="invite-summary-date">{{ m.sent_at or '—' }}</span>
+          <span class="invite-summary-dash"> — </span>
+          <span class="invite-summary-theme">{{ m.theme or 'Без темы' }}</span>
+        </span>
+        <span class="invite-summary-id">id {{ m.invite_id }}</span>
+      </summary>
+      <div class="invite-mail-inner">
+        {% if m.lk_url %}
+        <p class="hint"><a href="{{ m.lk_url }}" target="_blank" rel="noopener">Карточка в ЛК</a></p>
+        {% endif %}
+        {% if m.trade_numeric_id %}
+        <p class="hint">TradeId API: <strong>{{ m.trade_numeric_id }}</strong>{% if m.trade_view_url_used %} · <a href="{{ m.trade_view_url_used }}" target="_blank" rel="noopener">Trade/View</a>{% endif %}{% if m.lot_items_total_rows is defined and m.lot_items_total_rows is not none %} · строк в ответе API: {{ m.lot_items_total_rows }}{% endif %}</p>
+        {% endif %}
+        {% if m.lot_items_plain %}
+        <h4 class="lot-items-h">Позиции лота (КТРУ / характеристики)</h4>
+        <pre class="invite-body lot-items-pre">{{ m.lot_items_plain }}</pre>
+        {% endif %}
+        <pre class="invite-body invite-body-msg">{{ m.body_text if m.body_text else '(нет текста)' }}</pre>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  {% if invite_jqgrid_records is not none and invite_jqgrid_records > 0 and (invite_parsed_rows is none or invite_parsed_rows == 0) %}
+  <p class="hint err">Площадка вернула <strong>{{ invite_jqgrid_records }}</strong> записей в jqGrid, но ни одна строка не превратилась в приглашение (формат <code>cell</code> отличается от ожидаемого). Обновите скрипт или пришлите образец JSON ответа jqGrid.</p>
+  {% elif invite_parsed_rows is not none and invite_parsed_rows > 0 %}
+  <p class="hint err">Разобрано приглашений: <strong>{{ invite_parsed_rows }}</strong>, но тексты не попали в список (ошибки при открытии MessageView — смотрите блок «Лог последнего опроса» и <code>poll_stderr</code>).</p>
+  {% else %}
+  <p class="hint">Нет записей: в выбранном окне дат не найдено приглашений или опрос выполнялся без загрузки текстов.</p>
+  {% endif %}
+  {% endif %}
+</div>
+{% endif %}
+
+{% if poll_stdout %}
+<div class="card">
+  <h3>Лог последнего опроса</h3>
+  <pre class="log">{{ poll_stdout }}</pre>
+  {% if poll_stderr %}<pre class="log">{{ poll_stderr }}</pre>{% endif %}
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Раздел «Инструменты» (планируется)</h3>
+  <div class="tools-grid">
+    <div class="tool-tile">Массовый экспорт</div>
+    <div class="tool-tile">Отчёт по регламенту</div>
+    <div class="tool-tile">Привязка к ЕИС</div>
+    <div class="tool-tile">Планировщик</div>
+  </div>
+</div>
+<script>
+(function () {
+  var table = document.getElementById("eis-changelog-table");
+  if (!table) return;
+  var th = document.getElementById("eis-th-publish");
+  var tbody = table.querySelector("tbody");
+  if (!th || !tbody) return;
+  var col = 4;
+  var newestFirst = false;
+
+  function cellKey(row) {
+    var c = row.cells[col];
+    return c ? (c.getAttribute("data-publish-sort") || "").trim() : "";
+  }
+
+  function cmp(aKey, bKey) {
+    var aMiss = !aKey;
+    var bMiss = !bKey;
+    if (aMiss && bMiss) return 0;
+    if (aMiss) return 1;
+    if (bMiss) return -1;
+    if (newestFirst) return bKey.localeCompare(aKey);
+    return aKey.localeCompare(bKey);
+  }
+
+  function sortRows() {
+    newestFirst = !newestFirst;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+    rows.sort(function (ra, rb) {
+      return cmp(cellKey(ra), cellKey(rb));
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+    th.setAttribute("aria-sort", newestFirst ? "descending" : "ascending");
+    var ind = th.querySelector(".eis-sort-ind");
+    if (ind) ind.textContent = newestFirst ? " \u2193" : " \u2191";
+  }
+
+  th.addEventListener("click", sortRows);
+  th.addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter" || ev.key === " ") {
+      ev.preventDefault();
+      sortRows();
+    }
+  });
+})();
+
+(function () {
+  var el = document.getElementById("eis-cron-countdown");
+  var stopBtn = document.getElementById("eis-cron-stop-btn");
+  if (!el || !stopBtn) return;
+
+  var pollUrl = "/api/eis-cron-status";
+
+  function fmt(sec) {
+    var s = Math.max(0, Math.floor(sec));
+    var m = Math.floor(s / 60);
+    var r = s % 60;
+    return (m < 10 ? "0" : "") + m + ":" + (r < 10 ? "0" : "") + r;
+  }
+
+  function apply(data) {
+    var uiOn = !!data.ui_cron_enabled;
+    var envOk = !!data.env_schedule_ready;
+    var polling = !!data.polling;
+    var secs = data.seconds_until_next;
+    stopBtn.disabled = !uiOn;
+    if (polling && (uiOn || envOk))
+      el.textContent = "Идёт опрос ЕИС…";
+    else if ((uiOn || envOk) && secs !== null && secs !== undefined && typeof secs === "number")
+      el.textContent = "До следующего опроса: " + fmt(secs);
+    else if (uiOn && !polling)
+      el.textContent = "Ожидание первого прохода…";
+    else if (envOk && !polling)
+      el.textContent = "Планировщик ENV: следующий опрос считается…";
+    else
+      el.textContent = "—";
+  }
+
+  function tick() {
+    fetch(pollUrl, { credentials: "same-origin" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("status " + r.status);
+        return r.json();
+      })
+      .then(apply)
+      .catch(function () {
+        el.textContent = "Статус недоступен";
+      });
+  }
+
+  tick();
+  setInterval(tick, 1000);
+})();
+
+(function () {
+  var modal = document.getElementById("eis-ktru-modal");
+  var tbody = document.getElementById("eis-modal-cmp-tbody");
+  var posEl = document.getElementById("eis-modal-position");
+  var purEl = document.getElementById("eis-modal-purchase");
+  var ktruEl = document.getElementById("eis-modal-ktru");
+  var priceEl = document.getElementById("eis-modal-price-unit");
+  var totEl = document.getElementById("eis-modal-notice-total");
+  var custOrgEl = document.getElementById("eis-modal-customer-org");
+  if (!modal || !tbody) return;
+
+  function statusRu(rc) {
+    var labels = {
+      match: "совпало",
+      mismatch: "не совпадает",
+      customer_only: "только у заказчика",
+      supplier_only: "только в профиле",
+      no_supplier: "нет данных профиля"
+    };
+    return labels[rc] || rc;
+  }
+
+  function trClass(rc) {
+    if (rc === "match") return "eis-cmp-tr eis-cmp-match";
+    if (rc === "mismatch") return "eis-cmp-tr eis-cmp-mismatch";
+    return "eis-cmp-tr eis-cmp-neutral";
+  }
+
+  function cmpQuery(a) {
+    var lk = (a.getAttribute("data-customer-line-key") || "").trim();
+    var params = new URLSearchParams();
+    if (lk) {
+      params.set("line_key", lk);
+      return params.toString();
+    }
+    var p = (a.getAttribute("data-purchase-number") || "").trim();
+    var k = (a.getAttribute("data-ktru") || "").trim();
+    if (!p || !k) return "";
+    params.set("purchase", p);
+    params.set("ktru", k);
+    return params.toString();
+  }
+
+  function openModal() {
+    modal.removeAttribute("hidden");
+    modal.setAttribute("aria-hidden", "false");
+    document.documentElement.style.overflow = "hidden";
+  }
+
+  function closeModal() {
+    modal.setAttribute("hidden", "");
+    modal.setAttribute("aria-hidden", "true");
+    document.documentElement.style.overflow = "";
+  }
+
+  modal.querySelectorAll("[data-eis-modal-close]").forEach(function (el) {
+    el.addEventListener("click", function () { closeModal(); });
+  });
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !modal.hasAttribute("hidden")) closeModal();
+  });
+
+  function fillComparison(data) {
+    tbody.innerHTML = "";
+    var mh = data.modal_header || {};
+    if (posEl) posEl.textContent = mh.position_display_name || "";
+    if (purEl) purEl.textContent = mh.purchase_number || "—";
+    if (custOrgEl) custOrgEl.textContent = mh.customer_organization_display || "—";
+    if (ktruEl) ktruEl.textContent = mh.ktru_code || "—";
+    if (priceEl) priceEl.textContent = mh.price_per_unit || "—";
+    if (totEl) totEl.textContent = mh.notice_total_max_price || "—";
+    var rows = data.comparison_rows || [];
+    if (!rows.length) {
+      var tr0 = document.createElement("tr");
+      tr0.className = "eis-cmp-tr eis-cmp-neutral";
+      tr0.innerHTML = "<td colspan=\"4\">Нет характеристик в XML для выбранной строки.</td>";
+      tbody.appendChild(tr0);
+      return;
+    }
+    rows.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.className = trClass(row.row_class);
+      var c0 = document.createElement("td");
+      c0.textContent = row.label || "";
+      var c1 = document.createElement("td");
+      c1.textContent = row.customer_value || "—";
+      var c2 = document.createElement("td");
+      c2.textContent = row.supplier_value || "—";
+      var c3 = document.createElement("td");
+      c3.textContent = statusRu(row.row_class);
+      tr.appendChild(c0);
+      tr.appendChild(c1);
+      tr.appendChild(c2);
+      tr.appendChild(c3);
+      tbody.appendChild(tr);
+    });
+  }
+
+  function applyJournalStubToModal(anchor) {
+    if (!anchor) return;
+    var p = (anchor.getAttribute("data-purchase-number") || "").trim();
+    var k = (anchor.getAttribute("data-ktru") || "").trim();
+    var jc = (anchor.getAttribute("data-journal-customer") || "").trim();
+    var jt = (anchor.getAttribute("data-journal-notice-total") || "").trim();
+    if (purEl) purEl.textContent = p || "—";
+    if (ktruEl) ktruEl.textContent = k || "—";
+    if (custOrgEl) custOrgEl.textContent = jc || "—";
+    if (totEl) totEl.textContent = jt || "—";
+    if (priceEl) priceEl.textContent = "—";
+    if (posEl) posEl.textContent = "";
+  }
+
+  function showLoading(anchor) {
+    tbody.innerHTML = "";
+    var tr = document.createElement("tr");
+    tr.className = "eis-cmp-tr eis-cmp-neutral";
+    tr.innerHTML = "<td colspan=\"4\">Загрузка…</td>";
+    tbody.appendChild(tr);
+    if (posEl) posEl.textContent = "";
+    if (purEl) purEl.textContent = "—";
+    if (custOrgEl) custOrgEl.textContent = "—";
+    if (ktruEl) ktruEl.textContent = "—";
+    if (priceEl) priceEl.textContent = "—";
+    if (totEl) totEl.textContent = "—";
+    applyJournalStubToModal(anchor);
+  }
+
+  function fetchCompareJson(url) {
+    return fetch(url, { credentials: "same-origin" }).then(function (r) {
+      return r.text().then(function (text) {
+        var body = null;
+        if (text) {
+          try {
+            body = JSON.parse(text);
+          } catch (ignore) {}
+        }
+        if (!r.ok) {
+          var msg = "Ошибка " + r.status;
+          if (body && typeof body.detail === "string") msg = body.detail;
+          throw new Error(msg);
+        }
+        if (!body || typeof body !== "object") throw new Error("Пустой ответ сервера");
+        return body;
+      });
+    });
+  }
+
+  var pollRoot = document.getElementById("eis-poll");
+  if (!pollRoot) return;
+
+  pollRoot.addEventListener("click", function (ev) {
+    var a = ev.target && ev.target.closest ? ev.target.closest(".eis-ktru-compare-link") : null;
+    if (!a) return;
+    var qs = cmpQuery(a);
+    if (!qs) return;
+    ev.preventDefault();
+    showLoading(a);
+    openModal();
+    fetchCompareJson("/api/eis-compare-rows?" + qs)
+      .then(fillComparison)
+      .catch(function (err) {
+        applyJournalStubToModal(a);
+        tbody.innerHTML = "";
+        var tr = document.createElement("tr");
+        tr.className = "eis-cmp-tr eis-cmp-neutral";
+        var td = document.createElement("td");
+        td.colSpan = 4;
+        var msg = (err && err.message) ? String(err.message) : "Не удалось загрузить сравнение.";
+        td.textContent =
+          msg +
+          " Таблица характеристик доступна только из последнего успешного опроса ЕИС (customer_characteristics в last_eis_poll.json). " +
+          "Номер закупки, КТРУ, заказчик и сумма сверху — из журнала (если были сохранены при опросе).";
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+      });
+  });
+})();
+</script>
+{% endblock %}

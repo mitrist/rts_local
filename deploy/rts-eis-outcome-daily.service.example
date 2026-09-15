@@ -1,0 +1,28 @@
+# Суточный пересчёт статусов процедур ЕИС за вчера (MSK).
+# Не оперативный инструмент — batch для сбора/актуализации аналитики.
+#
+#   sudo cp deploy/rts-eis-outcome-daily.service.example /etc/systemd/system/rts-eis-outcome-daily.service
+#   sudo cp deploy/rts-eis-outcome-daily.timer.example /etc/systemd/system/rts-eis-outcome-daily.timer
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now rts-eis-outcome-daily.timer
+#
+# Ручной прогон:
+#   /opt/rts_tender/venv/bin/python tools/backfill_eis_outcomes.py --yesterday
+
+[Unit]
+Description=EIS procedure outcome backfill for yesterday (MSK)
+After=network.target
+
+[Service]
+Type=oneshot
+User=mitrist12
+Group=mitrist12
+WorkingDirectory=/opt/rts_tender/app
+EnvironmentFile=/etc/rts-tender/service.env
+EnvironmentFile=-/etc/rts-tender/eis.env
+Environment=EIS_RSS_VERIFY_SSL=0
+ExecStart=/opt/rts_tender/venv/bin/python tools/backfill_eis_outcomes.py --yesterday
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>RTS Cookie Bridge</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 12px; width: 380px; font-size: 13px; }
+    label { display: block; margin-top: 8px; font-weight: 600; }
+    input, textarea, select { width: 100%; box-sizing: border-box; margin-top: 4px; padding: 6px; }
+    textarea { min-height: 72px; font-family: ui-monospace, monospace; font-size: 11px; }
+    button { margin-top: 12px; width: 100%; padding: 8px; cursor: pointer; }
+    #status { margin-top: 10px; min-height: 2.5em; white-space: pre-wrap; }
+    #autoStatus { margin-top: 8px; white-space: pre-wrap; color: #444; font-size: 12px; line-height: 1.35; }
+    .ok { color: #0a7a2f; }
+    .err { color: #b00020; }
+    .hint { color: #555; font-size: 12px; margin-top: 8px; line-height: 1.35; }
+    .row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .row input[type="checkbox"] { width: auto; margin: 0; }
+    .row label { margin: 0; font-weight: 600; }
+    details { margin-top: 8px; }
+  </style>
+</head>
+<body>
+  <strong>RTS Cookie Bridge</strong>
+  <p class="hint">
+    Войдите на <strong>offers.rts-tender.ru</strong> по ЭЦП, выберите профиль и нажмите
+    <strong>«Сохранить cookie»</strong>. При успешной проверке cookie будут обновляться
+    каждые 180 секунд, пока Chrome открыт.
+  </p>
+  <label for="apiUrl">URL API 1 (POST /api/rts/cookie/save)</label>
+  <input id="apiUrl" type="url" placeholder="https://rts.raytec-log.pro/api/rts/cookie/save">
+  <label for="apiUrl2">URL API 2 (необязательно)</label>
+  <input id="apiUrl2" type="url" placeholder="http://161.104.18.194/api/rts/cookie/save">
+  <p class="hint">Если указаны оба URL — cookie сохраняются на оба сервиса. Если один — только на него.</p>
+  <label for="profile">Профиль</label>
+  <select id="profile">
+    <option value="IPSokolova">IPSokolova</option>
+    <option value="Nacpro">Nacpro</option>
+    <option value="customer_monitor">Заказчик</option>
+  </select>
+  <p class="hint" id="profileHint"></p>
+  <label for="apiKey">API key (RTS_COOKIE_INGEST_KEY)</label>
+  <input id="apiKey" type="password" autocomplete="off">
+  <div class="row">
+    <input id="autoRefresh" type="checkbox" checked>
+    <label for="autoRefresh">Авто-обновление каждые 180 сек</label>
+  </div>
+  <button id="sendBtn" type="button">Сохранить cookie</button>
+  <div id="autoStatus" class="hint"></div>
+  <details id="manualCookieDetails">
+    <summary class="hint">Ручная вставка из DevTools (если авто-сбор не сработал)</summary>
+    <label for="cookieManual">Cookie из Network</label>
+    <textarea id="cookieManual" placeholder=".Auth.Sso=…; .Auth.Rts.C=… или .Auth.Rts.P=…" spellcheck="false"></textarea>
+  </details>
+  <div id="status"></div>
+  <script src="bridge.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

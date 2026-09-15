@@ -1,0 +1,212 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Монитор ПП РТС</h2>
+
+{% if flash_ok %}<div class="msg ok">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="msg err">{{ flash_err }}</div>{% endif %}
+
+<div class="card">
+  <h3>Статус</h3>
+  <p class="hint">
+    Supervisor (env <code>RTS_PP_MONITOR=1</code>):
+    {% if env_monitor_enabled %}включён{% else %}выключен{% endif %}.
+    Backfill реестра:
+    {% if settings.registry_backfill_done %}выполнен{% else %}ожидает{% endif %}.
+  </p>
+</div>
+
+<div class="card">
+  <h3>Customer cookie (ЛК заказчика)</h3>
+  <p class="hint">
+    Profile для расширения: <code>{{ customer_profile }}</code>.
+    Файл: <code>{{ paths.customer_monitor_cookie }}</code>.
+  </p>
+  {% if cookie_status.file_exists %}
+  <p class="hint">
+    {{ cookie_status.cookie_chars }} символов.
+    {% if cookie_status.probe_ok is sameas true %}
+      — сессия OK{% if cookie_status.probe_items_count is not none %}, search: {{ cookie_status.probe_items_count }} поз.{% endif %}
+    {% elif cookie_status.probe_ok is sameas false %}
+      — проверка не прошла ({{ cookie_status.probe_reason or '—' }})
+    {% endif %}
+  </p>
+  {% else %}
+  <p class="msg err">Cookie не сохранён — войдите в ЛК заказчика на platform/offers.rts-tender.ru и отправьте cookie через расширение.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Настройки монитора</h3>
+  <form method="post" action="{{ request.url_for('action_rts_pp_monitor_save') }}" class="preoffer-form">
+    <label class="checkbox-row">
+      <input type="checkbox" name="enabled" value="1" {% if form.enabled %}checked{% endif %}>
+      <span>Монитор включён</span>
+    </label>
+    <label>
+      <span>Интервал опроса, мин (5–120)</span>
+      <input type="number" name="poll_interval_min" value="{{ form.poll_interval_min }}" min="5" max="120">
+    </label>
+    <label>
+      <span>Коды КТРУ для монитора (по строке)</span>
+      <textarea name="ktru_codes_text" rows="8" spellcheck="false" placeholder="26.20.13.000-00000002">{{ form.ktru_codes_text }}</textarea>
+    </label>
+    <label>
+      <span>Цена от, ₽</span>
+      <input type="text" name="price_min" value="{{ form.price_min }}" inputmode="decimal" autocomplete="off">
+    </label>
+    <label>
+      <span>Цена до, ₽</span>
+      <input type="text" name="price_max" value="{{ form.price_max }}" inputmode="decimal" autocomplete="off">
+    </label>
+    <label>
+      <span>ID регионов (опционально, по строке)</span>
+      <textarea name="region_ids_text" rows="3" spellcheck="false">{{ form.region_ids_text }}</textarea>
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="skip_expired" value="1" {% if form.skip_expired %}checked{% endif %}>
+      <span>Не уведомлять о просроченных ПП</span>
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="notify_telegram" value="1" {% if form.notify_telegram %}checked{% endif %}>
+      <span>Telegram (тот же chat_id)</span>
+    </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="notify_max" value="1" {% if form.notify_max %}checked{% endif %}>
+      <span>MAX (тот же chat_id)</span>
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Сохранить</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Опрос</h3>
+  <p class="hint">Backfill — полный проход реестра по каждому КТРУ (лучше запускать на выходных, с паузами между страницами). После backfill — инкрементальный «Опрос сейчас».</p>
+  <form method="post" action="{{ request.url_for('action_rts_pp_monitor_backfill') }}" class="eis-submit-row">
+    <button type="submit">Backfill реестра</button>
+  </form>
+  <form method="post" action="{{ request.url_for('action_rts_pp_monitor_run_once') }}" class="eis-submit-row" style="margin-top:0.5rem">
+    <button type="submit">Опрос сейчас</button>
+  </form>
+  <form method="post" action="{{ request.url_for('action_rts_pp_monitor_reseed') }}" class="eis-submit-row" style="margin-top:0.5rem">
+    <button type="submit">Сбросить baseline и реестр</button>
+  </form>
+</div>
+
+<div class="card pp-monitor-journal-card">
+  <h3>Журнал (последние 30)</h3>
+  <p class="hint">Только ПП по текущим фильтрам монитора (КТРУ и цена).</p>
+  {% if journal and journal|length > 0 %}
+  <div class="pp-monitor-journal-scroll">
+  <table class="eis-table pp-monitor-journal-table" id="pp-monitor-journal-table">
+    <thead>
+      <tr>
+        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="descending"
+            id="pp-monitor-th-added" aria-label="Дата добавления, сортировка">
+          Дата добавления <span class="eis-sort-ind" aria-hidden="true"> ↓</span>
+        </th>
+        <th>Действует до</th>
+        <th>Дата в реестре</th>
+        <th>КТРУ</th>
+        <th>Наименование</th>
+        <th>ID ПП</th>
+        <th>Цена</th>
+        <th title="Число строк в «Условия поставки товара» (find)">Усл. поставки</th>
+        <th>Статус</th>
+        <th>Карточка</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for row in journal %}
+      <tr>
+        <td data-added-sort="{{ row.create_sort_key|e }}">{{ row.create_display_msk or '—' }}</td>
+        <td>{{ row.validity_display_msk or '—' }}</td>
+        <td>{{ row.link_date_display_msk or '—' }}</td>
+        <td><code>{{ row.ktru_code }}</code></td>
+        <td class="pp-monitor-name-cell">{{ row.item_name or '—' }}</td>
+        <td>
+          {% if row.card_url %}
+          <a href="{{ row.card_url }}" target="_blank" rel="noopener"><code>{{ row.offer_price_list_item_id }}</code></a>
+          {% else %}
+          <code>{{ row.offer_price_list_item_id }}</code>
+          {% endif %}
+        </td>
+        <td>{% if row.unit_price is not none %}{{ row.unit_price }}{% else %}—{% endif %}</td>
+        <td>{% if row.delivery_places_count is not none %}{{ row.delivery_places_count }}{% else %}—{% endif %}</td>
+        <td>{{ row.status }}{% if row.error_text %}: {{ row.error_text[:80] }}{% endif %}</td>
+        <td>
+          {% if row.has_find %}
+          <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=row.offer_price_list_item_id) }}">✓</a>
+          {% else %}
+          <form method="post" action="{{ request.url_for('action_rts_pp_monitor_fetch_find') }}" class="inline-form">
+            <input type="hidden" name="offer_id" value="{{ row.offer_price_list_item_id }}">
+            <input type="hidden" name="return_to" value="monitor">
+            <button type="submit" class="link-button">Загрузить</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="hint">Записей пока нет.</p>
+  {% endif %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  var table = document.getElementById("pp-monitor-journal-table");
+  if (!table) return;
+  var th = document.getElementById("pp-monitor-th-added");
+  var tbody = table.querySelector("tbody");
+  if (!th || !tbody) return;
+  var col = 0;
+  var newestFirst = true;
+
+  function cellKey(row) {
+    var c = row.cells[col];
+    return c ? (c.getAttribute("data-added-sort") || "").trim() : "";
+  }
+
+  function cmp(aKey, bKey) {
+    var aMiss = !aKey;
+    var bMiss = !bKey;
+    if (aMiss && bMiss) return 0;
+    if (aMiss) return 1;
+    if (bMiss) return -1;
+    if (newestFirst) return bKey.localeCompare(aKey);
+    return aKey.localeCompare(bKey);
+  }
+
+  function applySort() {
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll("tr"));
+    rows.sort(function (ra, rb) {
+      return cmp(cellKey(ra), cellKey(rb));
+    });
+    rows.forEach(function (r) { tbody.appendChild(r); });
+    th.setAttribute("aria-sort", newestFirst ? "descending" : "ascending");
+    var ind = th.querySelector(".eis-sort-ind");
+    if (ind) ind.textContent = newestFirst ? " \u2193" : " \u2191";
+  }
+
+  function sortRows() {
+    newestFirst = !newestFirst;
+    applySort();
+  }
+
+  th.addEventListener("click", sortRows);
+  th.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" || e.key === " ") {
+      e.preventDefault();
+      sortRows();
+    }
+  });
+  applySort();
+})();
+</script>
+{% endblock %}
