@@ -128,6 +128,26 @@ def test_pp_monitor_samples_operator_access(monkeypatch, tmp_path: Path):
     assert "Создать черновик" in detail.text
 
 
+def test_pp_monitor_sample_detail_with_publish_enabled(monkeypatch, tmp_path: Path):
+    """Regression: duplicate {% block scripts %} broke the card page (500)."""
+    users_file = tmp_path / "web_users.txt"
+    users_file.write_text("IPSokolova:pass\n", encoding="utf-8")
+    monkeypatch.setenv("RTS_WEB_USERS_FILE", str(users_file))
+    monkeypatch.setenv("RTS_PP_PUBLISH_ENABLED", "1")
+    web_auth.configure_web_auth(users_file)
+    db = tmp_path / "eis_analytics.sqlite3"
+    _seed_registry(db)
+    _seed_finding(db)
+    monkeypatch.setattr(web_main, "_META", tmp_path)
+    monkeypatch.setattr(web_main, "_eis_analytics_db_path", lambda: db)
+    client = TestClient(web_main.app)
+    _login(client, "IPSokolova", "pass")
+    detail = client.get("/pp-monitor-samples/sample1")
+    assert detail.status_code == 200
+    assert "Создать черновик" in detail.text
+    assert "pp_publish_sign.js" in detail.text
+
+
 def test_pp_monitor_samples_name_filter_persists_in_session(monkeypatch, tmp_path: Path):
     users_file = tmp_path / "web_users.txt"
     users_file.write_text("IPSokolova:pass\n", encoding="utf-8")
