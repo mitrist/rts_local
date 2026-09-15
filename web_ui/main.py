@@ -247,6 +247,13 @@ from rts_ktru_cache import (
     load_cached_template,
 )
 from rts_pp_draft_service import create_pp_draft_from_monitor, create_pp_draft_from_notice
+from rts_pp_publish_service import (
+    cancel_publish_job,
+    get_publish_job_status,
+    publish_enabled as pp_publish_enabled,
+    start_publish_job,
+    submit_publish_signatures,
+)
 from rts_pp_api import (
     RtsPpApiError,
     draft_edit_url,
@@ -1187,6 +1194,10 @@ def _pp_participate_require_preoffer_catalog() -> bool:
 
 def _pp_drafts_enrich_rts_enabled() -> bool:
     return _env_bool("RTS_PP_DRAFTS_ENRICH_RTS", False)
+
+
+def _pp_publish_enabled() -> bool:
+    return pp_publish_enabled()
 
 
 def _pp_drafts_get_timeout_sec() -> float:
@@ -2738,6 +2749,7 @@ def page_offer_matching(
         ktru_queries=ktru_queries,
     )
     ctx.update(web_auth_ui_context(request))
+    ctx["pp_publish_enabled"] = _pp_publish_enabled()
     return _templates.TemplateResponse("offer_matching.html", ctx)
 
 
@@ -2769,6 +2781,7 @@ def page_day_summary(
         ktru_queries=None,
     )
     ctx.update(web_auth_ui_context(request))
+    ctx["pp_publish_enabled"] = _pp_publish_enabled()
     return _templates.TemplateResponse("offer_matching.html", ctx)
 
 
@@ -3948,6 +3961,7 @@ def page_pp_monitor_sample_detail(request: Request, _: Auth, offer_id: str) -> A
         "participation_price_ord_enabled": _participation_price_ord_enabled(),
         "chain_url": chain_url,
         "eis_pp_link_candidates": eis_pp_link_candidates,
+        "pp_publish_enabled": _pp_publish_enabled(),
     }
     ctx.update(web_auth_ui_context(request))
     return _templates.TemplateResponse("pp_monitor_sample_detail.html", ctx)
@@ -4286,6 +4300,7 @@ def page_pp_drafts(
         "pagination": pagination,
         "admin_drafts_view": bool(cookie_meta.get("admin_view")),
         "rts_offers_base": "https://offers.rts-tender.ru",
+        "pp_publish_enabled": _pp_publish_enabled(),
     }
     ctx.update(web_auth_ui_context(request))
     return _templates.TemplateResponse("pp_drafts.html", ctx)
@@ -5236,6 +5251,110 @@ async def api_rts_pp_draft_delete(request: Request, _: Auth) -> dict[str, Any]:
     if not deleted:
         raise HTTPException(status_code=404, detail="Запись черновика не найдена.")
     return {"ok": True, "purchase_number": pn, "line_key": lk}
+
+
+def _raise_publish_result(result: Any) -> dict[str, Any]:
+    if not result.ok and result.http_status >= 400:
+        raise HTTPException(status_code=result.http_status, detail=result.error or result.reason or "error")
+    return result.as_api_dict()
+
+
+@app.post("/api/rts/pp/publish/start", name="api_rts_pp_publish_start")
+async def api_rts_pp_publish_start(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    profile = _rts_profile_for_request(request)
+    if auth_enabled() and not profile:
+        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    try:
+        draft_id = int(body.get("rts_draft_id") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="rts_draft_id должен быть числом.") from exc
+    force_new = bool(body.get("force_new") or body.get("retry"))
+    result = await asyncio.to_thread(
+        start_publish_job,
+        analytics_db=_eis_analytics_db_path(),
+        cookie_path=_cookie_path_for_request(request),
+        rts_draft_id=draft_id,
+        rts_profile=profile,
+        source=str(body.get("source") or "").strip(),
+        source_key=str(body.get("source_key") or "").strip(),
+        force_new=force_new,
+    )
+    return _raise_publish_result(result)
+
+
+@app.post("/api/rts/pp/publish/submit-signatures", name="api_rts_pp_publish_submit_signatures")
+async def api_rts_pp_publish_submit_signatures(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    profile = _rts_profile_for_request(request)
+    if auth_enabled() and not profile:
+        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    try:
+        job_id = int(body.get("job_id") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="job_id должен быть числом.") from exc
+    signatures = body.get("signatures")
+    if not isinstance(signatures, list):
+        raise HTTPException(status_code=400, detail="Ожидается массив signatures.")
+    result = await asyncio.to_thread(
+        submit_publish_signatures,
+        analytics_db=_eis_analytics_db_path(),
+        cookie_path=_cookie_path_for_request(request),
+        job_id=job_id,
+        signatures=signatures,
+        rts_profile=profile,
+    )
+    return _raise_publish_result(result)
+
+
+@app.get("/api/rts/pp/publish/status", name="api_rts_pp_publish_status")
+def api_rts_pp_publish_status(
+    request: Request,
+    _: Auth,
+    job_id: Annotated[int, Query()],
+) -> dict[str, Any]:
+    profile = _rts_profile_for_request(request)
+    if auth_enabled() and not profile:
+        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    result = get_publish_job_status(
+        analytics_db=_eis_analytics_db_path(),
+        job_id=int(job_id),
+        rts_profile=profile,
+    )
+    return _raise_publish_result(result)
+
+
+@app.post("/api/rts/pp/publish/cancel", name="api_rts_pp_publish_cancel")
+async def api_rts_pp_publish_cancel(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    profile = _rts_profile_for_request(request)
+    if auth_enabled() and not profile:
+        raise HTTPException(status_code=401, detail="Требуется вход под оператором (IPSokolova или Nacpro).")
+    try:
+        job_id = int(body.get("job_id") or 0)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="job_id должен быть числом.") from exc
+    result = cancel_publish_job(
+        analytics_db=_eis_analytics_db_path(),
+        job_id=job_id,
+        rts_profile=profile,
+    )
+    return _raise_publish_result(result)
 
 
 @app.get("/api/eis-compare-rows", name="api_eis_compare_rows")

@@ -5,6 +5,9 @@
   Черновики из подбора предложений («Участвовать») и из образцов ПП конкурентов («Создать черновик»).
   Статусы из ЛК РТС подгружаются только при <code>RTS_PP_DRAFTS_ENRICH_RTS=1</code> в env сервера.
   Открывайте позиции по прямым ссылкам в колонке «РТС».
+  {% if pp_publish_enabled %}
+  Публикация ПП: кнопка «Опубликовать» (нужны КриптоПро Browser Plugin и ЭП на этом ПК).
+  {% endif %}
 </p>
 
 {% if cookie_meta.admin_view %}
@@ -113,6 +116,12 @@
           {% if row.edit_url %}
             <a href="{{ row.edit_url }}" target="_blank" rel="noopener" class="button secondary">Открыть в РТС</a>
           {% endif %}
+          {% if pp_publish_enabled and row.rts_draft_id and row.status != 'error' %}
+            <button type="button" class="button pp-draft-publish-btn"
+                    data-rts-draft-id="{{ row.rts_draft_id }}"
+                    data-source="{{ row.draft_source or 'notice' }}"
+                    data-source-key="{{ row.purchase_number }}|{{ row.line_key }}">Опубликовать</button>
+          {% endif %}
           <button type="button" class="button danger pp-draft-delete-btn"
                   data-purchase-number="{{ row.purchase_number }}"
                   data-line-key="{{ row.line_key }}"
@@ -120,6 +129,7 @@
           {% if row.rts_draft_id and not row.protected_id %}
             <span class="hint">id {{ row.rts_draft_id }} — откройте из списка черновиков</span>
           {% endif %}
+          <div class="hint pp-draft-publish-status" hidden></div>
         </td>
       </tr>
       {% endfor %}
@@ -177,6 +187,45 @@
         });
     });
   });
+
+  document.querySelectorAll(".pp-draft-publish-btn").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (!window.RtsPpPublish) {
+        window.alert("Модуль публикации не загружен.");
+        return;
+      }
+      var draftId = btn.getAttribute("data-rts-draft-id");
+      var statusEl = btn.parentElement
+        ? btn.parentElement.querySelector(".pp-draft-publish-status")
+        : null;
+      btn.disabled = true;
+      window.RtsPpPublish.run({
+        rtsDraftId: draftId,
+        source: btn.getAttribute("data-source") || "",
+        sourceKey: btn.getAttribute("data-source-key") || "",
+        forceNew: true,
+        statusEl: statusEl,
+        onStatus: function (msg, kind) {
+          if (!statusEl) return;
+          statusEl.hidden = false;
+          statusEl.textContent = msg;
+          statusEl.className = "hint pp-draft-publish-status" +
+            (kind === "error" ? " msg err" : (kind === "ok" ? " msg ok" : ""));
+        }
+      }).then(function () {
+        btn.disabled = false;
+      }).catch(function () {
+        btn.disabled = false;
+      });
+    });
+  });
 })();
 </script>
+{% endblock %}
+{% block scripts %}
+{% if pp_publish_enabled %}
+<script>window.__PP_PUBLISH_ENABLED = true;</script>
+<script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
+<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=1"></script>
+{% endif %}
 {% endblock %}

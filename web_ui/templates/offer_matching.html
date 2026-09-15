@@ -941,6 +941,18 @@
           if (data.verify_report) {
             showDraftVerifyReport(data.verify_report, pn, lk);
           }
+          if (window.__PP_PUBLISH_ENABLED && data.rts_draft_id && window.RtsPpPublish) {
+            setParticipateStatus("Черновик создан. Готовим публикацию…", "pending");
+            window.RtsPpPublish.run({
+              rtsDraftId: data.rts_draft_id,
+              source: "notice",
+              sourceKey: pn + "|" + lk,
+              onStatus: function (msg, kind) {
+                var mapped = kind === "error" ? "err" : (kind === "ok" ? "ok" : "pending");
+                setParticipateStatus(msg, mapped);
+              }
+            }).catch(function () { /* status already set */ });
+          }
         })
         .catch(function (err) {
           participateBusy = false;
@@ -976,4 +988,11 @@
   })();
 })();
 </script>
+{% endblock %}
+{% block scripts %}
+{% if pp_publish_enabled %}
+<script>window.__PP_PUBLISH_ENABLED = true;</script>
+<script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
+<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=1"></script>
+{% endif %}
 {% endblock %}

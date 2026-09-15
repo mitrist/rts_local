@@ -24,7 +24,7 @@ from eis_history_config import HISTORY_DOCUMENT_TYPE_44
 from eis_ktru_characteristics import CustomerCharacteristic, KtruPurchaseLine
 from eis_notice_html_parse import parse_notice_common_info_context, parse_notice_common_info_html
 
-ANALYTICS_SCHEMA = 19
+ANALYTICS_SCHEMA = 20
 DEFAULT_DB_NAME = "eis_analytics.sqlite3"
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30_000
 RSS_TELEGRAM_LINE_KEY = "__rss__"
@@ -424,6 +424,26 @@ def init_db(conn: sqlite3.Connection) -> None:
           PRIMARY KEY (purchase_number, line_key)
         );
         CREATE INDEX IF NOT EXISTS idx_notice_eis_outcome_outcome ON notice_eis_outcome(eis_outcome, computed_at_utc);
+
+        CREATE TABLE IF NOT EXISTS rts_pp_publish_jobs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          rts_profile TEXT NOT NULL DEFAULT '',
+          rts_draft_id INTEGER NOT NULL,
+          source TEXT NOT NULL DEFAULT '',
+          source_key TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'preparing',
+          prepare_json TEXT NOT NULL DEFAULT '',
+          sign_requests_json TEXT NOT NULL DEFAULT '',
+          signatures_json TEXT NOT NULL DEFAULT '',
+          error_text TEXT NOT NULL DEFAULT '',
+          created_at_utc TEXT NOT NULL,
+          updated_at_utc TEXT NOT NULL,
+          published_at_utc TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_rts_pp_publish_jobs_draft
+          ON rts_pp_publish_jobs(rts_draft_id, rts_profile, updated_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_rts_pp_publish_jobs_status
+          ON rts_pp_publish_jobs(status, updated_at_utc);
         """
     )
     _ensure_column(conn, "rss_poll_runs", "previous_success_finished_at_utc", "TEXT")
@@ -3199,6 +3219,174 @@ def delete_pp_monitor_draft(
             WHERE offer_price_list_item_id = ? AND rts_profile = ?
             """,
             (oid, profile),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0) > 0
+
+
+_PUBLISH_JOB_STATUSES = frozenset(
+    {
+        "preparing",
+        "awaiting_signature",
+        "timestamping",
+        "publishing",
+        "published",
+        "failed",
+        "cancelled",
+    }
+)
+
+
+def _row_to_publish_job(row: sqlite3.Row | None) -> dict[str, Any] | None:
+    if row is None:
+        return None
+    d = dict(row)
+    for key in ("prepare_json", "sign_requests_json", "signatures_json"):
+        raw = str(d.get(key) or "").strip()
+        parsed: Any = None
+        if raw:
+            try:
+                parsed = json.loads(raw)
+            except json.JSONDecodeError:
+                parsed = None
+        d[key.replace("_json", "")] = parsed
+    return d
+
+
+def get_pp_publish_job(path: Path, job_id: int) -> dict[str, Any] | None:
+    if not path.is_file() or int(job_id) <= 0:
+        return None
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT * FROM rts_pp_publish_jobs WHERE id = ?",
+            (int(job_id),),
+        ).fetchone()
+    return _row_to_publish_job(row)
+
+
+def find_pp_publish_job_for_draft(
+    path: Path,
+    *,
+    rts_draft_id: int,
+    rts_profile: str = "",
+    statuses: Iterable[str] | None = None,
+) -> dict[str, Any] | None:
+    if not path.is_file() or int(rts_draft_id) <= 0:
+        return None
+    profile = str(rts_profile or "").strip()
+    status_list = [str(s).strip() for s in (statuses or ()) if str(s).strip()]
+    with connect(path) as conn:
+        if status_list:
+            placeholders = ",".join("?" for _ in status_list)
+            row = conn.execute(
+                f"""
+                SELECT * FROM rts_pp_publish_jobs
+                WHERE rts_draft_id = ? AND rts_profile = ?
+                  AND status IN ({placeholders})
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(rts_draft_id), profile, *status_list),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT * FROM rts_pp_publish_jobs
+                WHERE rts_draft_id = ? AND rts_profile = ?
+                ORDER BY id DESC
+                LIMIT 1
+                """,
+                (int(rts_draft_id), profile),
+            ).fetchone()
+    return _row_to_publish_job(row)
+
+
+def create_pp_publish_job(
+    path: Path,
+    *,
+    rts_draft_id: int,
+    rts_profile: str = "",
+    source: str = "",
+    source_key: str = "",
+    status: str = "preparing",
+    prepare_json: str = "",
+    sign_requests_json: str = "",
+    signatures_json: str = "",
+    error_text: str = "",
+) -> int:
+    now = _utc_iso(datetime.now(timezone.utc))
+    st = str(status or "preparing").strip()
+    if st not in _PUBLISH_JOB_STATUSES:
+        st = "preparing"
+    with connect(path) as conn:
+        cur = conn.execute(
+            """
+            INSERT INTO rts_pp_publish_jobs(
+              rts_profile, rts_draft_id, source, source_key, status,
+              prepare_json, sign_requests_json, signatures_json, error_text,
+              created_at_utc, updated_at_utc, published_at_utc
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '')
+            """,
+            (
+                str(rts_profile or "").strip(),
+                int(rts_draft_id),
+                str(source or "")[:50],
+                str(source_key or "")[:200],
+                st,
+                prepare_json or "",
+                sign_requests_json or "",
+                signatures_json or "",
+                str(error_text or "")[:2000],
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+        return int(cur.lastrowid)
+
+
+def update_pp_publish_job(
+    path: Path,
+    job_id: int,
+    *,
+    status: str | None = None,
+    prepare_json: str | None = None,
+    sign_requests_json: str | None = None,
+    signatures_json: str | None = None,
+    error_text: str | None = None,
+    published_at_utc: str | None = None,
+) -> bool:
+    if int(job_id) <= 0 or not path.is_file():
+        return False
+    fields: list[str] = ["updated_at_utc = ?"]
+    values: list[Any] = [_utc_iso(datetime.now(timezone.utc))]
+    if status is not None:
+        st = str(status).strip()
+        if st not in _PUBLISH_JOB_STATUSES:
+            return False
+        fields.append("status = ?")
+        values.append(st)
+    if prepare_json is not None:
+        fields.append("prepare_json = ?")
+        values.append(prepare_json)
+    if sign_requests_json is not None:
+        fields.append("sign_requests_json = ?")
+        values.append(sign_requests_json)
+    if signatures_json is not None:
+        fields.append("signatures_json = ?")
+        values.append(signatures_json)
+    if error_text is not None:
+        fields.append("error_text = ?")
+        values.append(str(error_text)[:2000])
+    if published_at_utc is not None:
+        fields.append("published_at_utc = ?")
+        values.append(str(published_at_utc))
+    values.append(int(job_id))
+    with connect(path) as conn:
+        cur = conn.execute(
+            f"UPDATE rts_pp_publish_jobs SET {', '.join(fields)} WHERE id = ?",
+            tuple(values),
         )
         conn.commit()
         return int(cur.rowcount or 0) > 0

@@ -18,6 +18,9 @@
     Справочник price_ord отключён — цена в черновике может быть не заполнена.
     {% endif %}
     Реестровые номера и документы проверьте в ЛК РТС.
+    {% if pp_publish_enabled %}
+    После создания черновика откроется подписание ЭП (КриптоПро) и публикация.
+    {% endif %}
   </p>
   <div id="monitor-draft-status" class="hint">
     {% if monitor_draft and monitor_draft.status == 'created' and monitor_draft.rts_draft_id %}
@@ -179,6 +182,19 @@
         busy = false;
         btn.disabled = false;
         renderDraft(data);
+        if (window.__PP_PUBLISH_ENABLED && data.rts_draft_id && window.RtsPpPublish) {
+          if (statusEl) statusEl.innerHTML = "Черновик создан. Готовим публикацию…";
+          window.RtsPpPublish.run({
+            rtsDraftId: data.rts_draft_id,
+            source: "monitor",
+            sourceKey: offerId,
+            onStatus: function (msg, kind) {
+              if (!statusEl) return;
+              var cls = kind === "error" ? "msg err" : (kind === "ok" ? "msg ok" : "hint");
+              statusEl.innerHTML = '<span class="' + cls + '">' + msg + "</span>";
+            }
+          }).catch(function () { /* status already set */ });
+        }
       })
       .catch(function (err) {
         busy = false;
@@ -192,4 +208,11 @@
   });
 })();
 </script>
+{% endblock %}
+{% block scripts %}
+{% if pp_publish_enabled %}
+<script>window.__PP_PUBLISH_ENABLED = true;</script>
+<script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
+<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=1"></script>
+{% endif %}
 {% endblock %}
