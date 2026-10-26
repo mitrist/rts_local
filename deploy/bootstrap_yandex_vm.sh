@@ -11,7 +11,7 @@ set -euo pipefail
 APP_USER="${APP_USER:-ubuntu}"
 APP_ROOT="${APP_ROOT:-/opt/rts_local}"
 META_DIR="${META_DIR:-/var/lib/rts_local}"
-ETC_DIR="${ETC_DIR:-/etc/rts-tender}"
+ETC_DIR="${ETC_DIR:-/etc/rts-local}"
 REPO_URL="${REPO_URL:-git@github.com:mitrist/rts_local.git}"
 BRANCH="${BRANCH:-main}"
 SERVICE_NAME="${SERVICE_NAME:-rts-local}"
@@ -61,6 +61,12 @@ python3 -m venv "$APP_ROOT/venv"
 if [[ ! -f "$ETC_DIR/service.env" ]]; then
   cp "$APP_ROOT/app/deploy/service.env.example" "$ETC_DIR/service.env"
   sed -i "s|/opt/rts_local|$APP_ROOT|g; s|/var/lib/rts_local|$META_DIR|g" "$ETC_DIR/service.env"
+  # Пример может содержать 8766 (старый соседний хост). Nginx ниже проксирует на WEB_PORT.
+  if grep -q '^RTS_WEB_PORT=' "$ETC_DIR/service.env"; then
+    sed -i "s/^RTS_WEB_PORT=.*/RTS_WEB_PORT=${WEB_PORT}/" "$ETC_DIR/service.env"
+  else
+    echo "RTS_WEB_PORT=${WEB_PORT}" >> "$ETC_DIR/service.env"
+  fi
 fi
 if [[ ! -f "$ETC_DIR/eis.env" ]]; then
   cp "$APP_ROOT/app/deploy/eis.env.example" "$ETC_DIR/eis.env"

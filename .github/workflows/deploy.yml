@@ -40,6 +40,7 @@ jobs:
             SERVICE="${SERVICE_NAME:-rts-local}"
             VENV="$(dirname "$APP_PATH")/venv"
             cd "$APP_PATH"
+            # reset только в каталоге приложения; базы и /etc/rts-local не входят в git
             git fetch origin main
             git reset --hard origin/main
             git log -1 --oneline

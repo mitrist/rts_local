@@ -1,188 +1,105 @@
-# Деплой rts_local (Yandex VM + GitHub)
+# Деплой rts_local (отдельная Ubuntu VM + GitHub)
 
-Локальная/отдельная копия консоли мониторинга ЕИС и ПП РТС (prod-референс: https://rts.raytec-log.pro/).
+Консоль мониторинга ЕИС и ПП РТС на своей машине. Старый хост `93.77.182.91` и сценарий «рядом с prod» не используются. `deploy/prepare_cohosted_vm.sh` и `deploy/sync_ktru_cache_from_prod.sh` не запускать.
 
-## Архитектура на VM (совместно с prod)
-
-Хост `93.77.182.91` уже крутит **prod** `rts-tender` → https://rts.raytec-log.pro/ (порт **8765**, `/etc/rts-tender`).
-`rts_local` ставится **рядом**, не перезаписывая prod:
+## Раскладка
 
 ```
-GitHub / rsync
+GitHub main
         ▼
- /opt/rts_local/app          ← код
+ /opt/rts_local/app                 ← код (git reset --hard только здесь)
  /opt/rts_local/venv
- /var/lib/rts_local          ← своя SQLite / cookies / preoffers
- /etc/rts-local/             ← service.env, eis.env, web_users.txt
- nginx → 127.0.0.1:8766
+ /opt/rts_local/data                ← eis_history.sqlite3 (вне git)
+ /var/lib/rts_local                 ← eis_analytics.sqlite3, ktru_rts_cache, cookies
+ /etc/rts-local/                    ← service.env, eis.env, web_users.txt
+ nginx :80 → 127.0.0.1:8765
  systemd: rts-local
- HTTPS: https://rts-local.raytec-log.pro/
 ```
 
-Одноразовая подготовка: `sudo bash deploy/prepare_cohosted_vm.sh`
+Обновление кода: push в `main` → GitHub Actions ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)). Базы, кэш и `/etc/rts-local` в `git reset` не входят.
 
-## Справочник шаблонов ПП (обязательно для «Участвовать» / «Создать черновик»)
+## Файлы, которые git не везёт
 
-Черновик ПП создаётся только если КТРУ есть в `$RTS_META_DIR/ktru_rts_cache`
-(на rts-local: `/var/lib/rts_local/ktru_rts_cache`). Иначе UI пишет
-«КТРУ нет в справочнике шаблонов ПП (draft_ktru_dict)».
+Их копируют с рабочей станции после bootstrap:
 
-На co-hosted VM скопируйте кэш с prod:
+| Откуда | Куда |
+|--------|------|
+| `SQL/eis_history.sqlite3` | `/opt/rts_local/data/eis_history.sqlite3` |
+| `data/local/eis_analytics.sqlite3` | `/var/lib/rts_local/eis_analytics.sqlite3` |
+| `data/local/meta/ktru_rts_cache/` | `/var/lib/rts_local/ktru_rts_cache/` |
+| `KTRU/draft_ktru_dict.txt` | импорт в тот же кэш (см. ниже) |
+
+Вручную, их нет в репозитории и на диске разработчика может не быть:
+
+- токен ЕРУЗ в `/etc/rts-local/eis.env`
+- пароли в `/etc/rts-local/web_users.txt` (в примере `123456`, сменить)
+- cookie РТС через Cookie Bridge на URL новой консоли
+
+## Справочник шаблонов ПП
+
+Черновик ПП создаётся только если КТРУ есть в `/var/lib/rts_local/ktru_rts_cache`. Иначе UI пишет «КТРУ нет в справочнике шаблонов ПП (draft_ktru_dict)».
 
 ```bash
-sudo bash /opt/rts_local/app/deploy/sync_ktru_cache_from_prod.sh
-```
-
-Или импортируйте dump `KTRU/draft_ktru_dict.txt` (файл ~30 MB, в git не хранится):
-
-```bash
-# положите draft_ktru_dict.txt в /opt/rts_local/app/KTRU/
 cd /opt/rts_local/app
-/opt/rts_local/venv/bin/python tools/import_draft_ktru_dict.py \
+sudo -u ubuntu /opt/rts_local/venv/bin/python tools/import_draft_ktru_dict.py \
+  --source /opt/rts_local/data/draft_ktru_dict.txt \
   --cache-dir /var/lib/rts_local/ktru_rts_cache
 ```
 
-Перезапуск сервиса не нужен — шаблоны читаются с диска.
+Перезапуск сервиса не нужен — шаблоны читаются с диска. Импорт перезаписывает файл кэша, если тот же код уже есть. Сначала копируют пять локальных шаблонов, затем импортируют справочник: официальный шаблон заменяет локальный.
 
-## 0. Перед первым деплоем — целостность кода
+## Первый bootstrap
 
-В `rts_local` сейчас **не хватает модулей и шаблонов**, без которых `python -m web_ui` падает на import.
-Рядом лежит полный проект `rts_tender` — синхронизируйте недостающее:
-
-```powershell
-cd E:\D\01_Projects\rts_local
-powershell -ExecutionPolicy Bypass -File tools\sync_missing_from_rts_tender.ps1
-```
-
-Скрипт копирует только отсутствующие `.py` и HTML-шаблоны. После этого проверьте импорт (на машине с Python):
+На Ubuntu открыты TCP 22 и 80. Deploy key GitHub — только чтение.
 
 ```bash
-python -c "import web_ui.main"
-```
-
-## 1. Локальный запуск (Windows / Linux, без VM)
-
-```bash
-cd /path/to/rts_local
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-source .venv/bin/activate
-pip install -r requirements.txt
-cp web_users.example.txt web_users.txt
-# опционально: env.txt с токеном ЕРУЗ, cookies через Cookie Bridge
-python -m web_ui
-# → http://127.0.0.1:8765
-```
-
-Без `web_users.txt` и без `RTS_WEB_USER` сайт открыт без логина (удобно для dev).
-
-## 2. Yandex Cloud VM — первый bootstrap
-
-На VM (Ubuntu 22.04/24.04), с доступом к GitHub по SSH deploy key или HTTPS:
-
-```bash
-# 1) Deploy key: ssh-keygen -t ed25519 -f ~/.ssh/rts_local_deploy -N ""
-#    Public key → GitHub → Settings → Deploy keys (read-only)
-#    Private key остаётся на VM
-
-sudo apt-get update && sudo apt-get install -y git
-sudo mkdir -p /opt/rts_local
-sudo chown "$USER:$USER" /opt/rts_local
-
-# Если репозиторий ещё пустой — сначала push с рабочей станции (см. §4)
-git clone git@github.com:mitrist/rts_local.git /opt/rts_local/app
-
-cd /opt/rts_local/app
-sudo APP_USER="$USER" REPO_URL=git@github.com:mitrist/rts_local.git \
+sudo APP_USER=ubuntu REPO_URL=git@github.com:mitrist/rts_local.git \
   bash deploy/bootstrap_yandex_vm.sh
 ```
 
-Скрипт создаёт venv, `/etc/rts-tender/*`, systemd `rts-local`, nginx proxy.
+Скрипт ставит git, nginx, python3-venv, создаёт `/opt/rts_local/app`, venv, systemd `rts-local` и nginx на 80 → `127.0.0.1:8765`. Конфиги копируются из примеров в `/etc/rts-local`. Повторный запуск существующие `service.env`, `eis.env` и `web_users.txt` не затирает. `RTS_WEB_PORT` при первом копировании принудительно равен `WEB_PORT` (8765).
 
 Затем:
 
 ```bash
-sudo nano /etc/rts-tender/service.env   # SESSION_SECRET, PUBLIC_BASE_URL, COOKIE_INGEST_KEY
-sudo nano /etc/rts-tender/eis.env       # токен ЕРУЗ, Telegram
-sudo nano /etc/rts-tender/web_users.txt # смените 123456
+sudo nano /etc/rts-local/service.env   # SESSION_SECRET, PUBLIC_BASE_URL, COOKIE_INGEST_KEY
+sudo nano /etc/rts-local/eis.env       # токен ЕРУЗ
+sudo nano /etc/rts-local/web_users.txt # смените 123456
 sudo systemctl restart rts-local
 curl -s http://127.0.0.1:8765/health/live
 ```
 
-Security group Yandex: открыть TCP 22, 80 (и 443 после certbot).
+Пока нет сертификата, в `service.env` стоит `RTS_WEB_HTTPS_ONLY=0`. После `certbot --nginx` поставьте `1` и https-URL.
 
-## 3. Timers (рекомендуется)
+Проверка ядра: страница «Ядро КТРУ» видит историю, кнопка «Обновить ядро из ЕИС» активна.
 
-```bash
-# Опрос реестра ПП
-sudo cp deploy/rts-pp-monitor-poll.service.example /etc/systemd/system/rts-pp-monitor-poll.service
-sudo cp deploy/rts-pp-monitor-poll.timer.example   /etc/systemd/system/rts-pp-monitor-poll.timer
-# правьте User=/WorkingDirectory=/ExecStart= под /opt/rts_local и пользователя VM
+## GitHub Actions
 
-# Watchdog зависаний
-sudo mkdir -p /run/rts-tender && sudo chown "$USER:$USER" /run/rts-tender
-sudo cp deploy/rts-tender-watchdog.service.example /etc/systemd/system/rts-local-watchdog.service
-sudo cp deploy/rts-tender-watchdog.timer.example   /etc/systemd/system/rts-local-watchdog.timer
-# в unit: ExecStart=.../tools/rts_tender_watchdog.py , RTS_WATCHDOG_SERVICE=rts-local
+Secrets: `VM_HOST` (публичный IP), `VM_USER`, `VM_SSH_KEY` (ключ, которым Actions ходит на VM). Это не deploy key репозитория.
 
-sudo systemctl daemon-reload
-sudo systemctl enable --now rts-pp-monitor-poll.timer
-sudo systemctl enable --now rts-local-watchdog.timer
-```
-
-Подробности: [HEALTH.md](HEALTH.md), [WEB_AUTH.md](WEB_AUTH.md).
-
-## 4. Первый push в GitHub
-
-Репозиторий https://github.com/mitrist/rts_local сейчас пустой. С рабочей станции:
-
-```bash
-cd E:/D/01_Projects/rts_local
-git init
-git remote add origin git@github.com:mitrist/rts_local.git
-git add -A
-git status   # убедитесь: нет cookies_rts.txt, env.txt, *.sqlite3, .cursor/
-git commit -m "Initial rts_local: console + deploy for Yandex VM"
-git branch -M main
-git push -u origin main
-```
-
-## 5. GitHub Actions → автодеплой
-
-Workflow: [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml).
-
-В GitHub → Settings → Secrets and variables → Actions:
-
-| Secret     | Значение                          |
-|------------|-----------------------------------|
-| `VM_HOST`  | публичный IP VM                   |
-| `VM_USER`  | SSH-пользователь                  |
-| `VM_SSH_KEY` | private key с правом `systemctl restart` (sudo NOPASSWD для сервиса) |
-
-На VM для Actions-пользователя:
+На VM:
 
 ```bash
 # /etc/sudoers.d/rts-local-deploy
 ubuntu ALL=(root) NOPASSWD: /bin/systemctl restart rts-local, /bin/systemctl is-active rts-local
 ```
 
-На VM deploy key / обычный ключ должен уметь `git fetch` в `/opt/rts_local/app`.
+Пользователь сервиса должен уметь `git fetch` в `/opt/rts_local/app` (read-only deploy key).
 
-После push в `main` Actions сделает `git reset --hard origin/main` + restart.
+## Cookie Bridge
 
-## 6. Cookie Bridge
+Расширение: `tools/rts-cookie-bridge/`. URL консоли — `http://IP` или домен. Ключ = `RTS_COOKIE_INGEST_KEY` из `service.env`.
 
-Расширение: `tools/rts-cookie-bridge/`. В `manifest.json` / popup укажите URL консоли (`http://VM_IP` или домен). Ключ = `RTS_COOKIE_INGEST_KEY` из `service.env`.
+## Timers
 
-## 7. Переменные (кратко)
+Их можно включить после появления cookie и токена. В unit-файлах замените пользователя и `/etc/rts-local`.
 
-| Переменная | Назначение |
-|------------|------------|
-| `EIS_ANALYTICS_DB` | операционная SQLite (RSS, HTML, монитор ПП) |
-| `EIS_HISTORY_DB` | аналитика КТРУ (XML backfill) |
-| `RTS_META_DIR` | cookies, JSON-настройки, lock-файлы |
-| `RTS_PP_MONITOR*` | опрос реестра ПП конкурентов |
-| `RTS_COOKIE_INGEST_KEY` | API ключ Cookie Bridge |
-| `RTS_WEB_USERS_FILE` | логин:пароль (логин = профиль РТС) |
+```bash
+sudo cp deploy/rts-pp-monitor-poll.service.example /etc/systemd/system/rts-pp-monitor-poll.service
+sudo cp deploy/rts-pp-monitor-poll.timer.example   /etc/systemd/system/rts-pp-monitor-poll.timer
+sudo cp deploy/rts-tender-watchdog.service.example /etc/systemd/system/rts-local-watchdog.service
+sudo cp deploy/rts-tender-watchdog.timer.example   /etc/systemd/system/rts-local-watchdog.timer
+sudo systemctl daemon-reload
+```
 
-Примеры: [service.env.example](service.env.example), [eis.env.example](eis.env.example).
+Подробности: [HEALTH.md](HEALTH.md), [WEB_AUTH.md](WEB_AUTH.md).
