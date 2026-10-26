@@ -60,6 +60,7 @@ def test_auto_participate_save_form(monkeypatch, tmp_path):
         data={
             "profile": "IPSokolova",
             "enabled": "on",
+            "auto_publish": "1",
             "min_purchase_amount": "300000",
             "ktru_mode": "whitelist",
             "ktru_codes_text": "08.12.12.140-00000005",
@@ -74,11 +75,30 @@ def test_auto_participate_save_form(monkeypatch, tmp_path):
     saved = load_settings(settings_path(tmp_path))
     rules = saved["profiles"]["IPSokolova"]
     assert rules["enabled"] is True
+    assert rules["auto_publish"] is True
     assert rules["min_purchase_amount"] == 300000
     assert rules["ktru_mode"] == "whitelist"
     assert rules["ktru_codes"] == ["08.12.12.140-00000005"]
     assert rules["min_match_ratio"] == 0.5
     assert rules["max_per_hour"] == 7
+
+    off = client.post(
+        "/action/auto-participate-save",
+        data={
+            "profile": "IPSokolova",
+            "enabled": "on",
+            "min_purchase_amount": "300000",
+            "ktru_mode": "whitelist",
+            "ktru_codes_text": "08.12.12.140-00000005",
+            "min_match_ratio": "50",
+            "max_per_hour": "7",
+        },
+        follow_redirects=False,
+    )
+    assert off.status_code == 303
+    saved2 = load_settings(settings_path(tmp_path))
+    assert saved2["profiles"]["IPSokolova"]["auto_publish"] is False
+    assert saved2["profiles"]["IPSokolova"]["enabled"] is True
 
 
 def test_sidebar_hides_auto_participate_for_operator(monkeypatch, tmp_path):

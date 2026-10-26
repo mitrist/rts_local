@@ -253,7 +253,8 @@
       Env: {% if env_auto_participate_enabled %}включён{% else %}выключен{% endif %}
       (<code>RTS_AUTO_PARTICIPATE</code> — должен быть 1 на сервере).
       Правила по профилям — на странице
-      <a href="{{ request.url_for('page_auto_participate') }}">Авто-участие</a>.
+      <a href="{{ request.url_for('page_auto_participate') }}">Авто-участие</a>
+      (create через инструмент РТС; опционально автопубликация + CryptoPro во вкладке сервиса).
     </p>
     <p class="hint">
       Фактически активно:
@@ -277,6 +278,158 @@
       </form>
       {% endif %}
     </div>
+
+    <form method="post" action="{{ request.url_for('action_admin_auto_participate_etp_save') }}" class="preoffer-form" style="margin-top:1rem">
+      <label>
+        <span>Площадки, для которых включено автоучастие</span>
+        <textarea name="etp_names_text" rows="5" spellcheck="false" placeholder="АО «Сбербанк-АСТ»&#10;РТС-тендер">{{ auto_participate_etp_names_text }}</textarea>
+      </label>
+      <p class="hint">
+        Названия как в карточке ЕИС («Наименование электронной площадки…»), по одной на строку.
+        {% if auto_participate_etp_count %}Сейчас: {{ auto_participate_etp_count }}.{% else %}Пусто = все площадки.{% endif %}
+      </p>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить площадки</button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="admin-section card" id="html-fetch-min-price">
+  <summary class="admin-section-summary">
+    Выгрузка HTML для извещений
+    <span class="admin-section-meta">
+      {% if html_fetch_min_price %}от {{ html_fetch_min_price }} ₽{% else %}без порога{% endif %}
+    </span>
+  </summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Карточки ЕИС (common-info) <strong>качаются автоматически</strong> для извещений,
+      у которых КТРУ есть в справочнике предложений — без порога цены.
+      Остальные КТРУ оператор загружает кнопкой «Загрузить карточку» в «Подбор предложений».
+      Порог ниже ограничивает только <strong>автоучастие</strong> (создание заявок).
+      Пустое поле — автоучастие тоже без порога.
+      Env: {% if env_html_auto_fetch %}EIS_HTML_AUTO_FETCH включён{% else %}EIS_HTML_AUTO_FETCH выключен{% endif %}.
+      Файл: <code>{{ paths.eis_rss_settings }}</code>.
+    </p>
+    <form method="post" action="{{ request.url_for('action_admin_html_fetch_min_price_save') }}" class="preoffer-form">
+      <label>
+        <span>Автоучастие от суммы контракта, ₽</span>
+        <input type="text" name="html_fetch_min_price" value="{{ html_fetch_min_price }}" inputmode="decimal" placeholder="150000" autocomplete="off">
+      </label>
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить порог</button>
+      </div>
+    </form>
+  </div>
+</details>
+
+<details class="admin-section card" id="auto-monitor-draft-runtime">
+  <summary class="admin-section-summary">
+    Авточерновик из монитора ПП
+    <span class="admin-section-meta">
+      {% if auto_monitor_draft_enabled %}включено{% else %}выключено{% endif %},
+      очередь {{ auto_monitor_draft_pending }}
+    </span>
+  </summary>
+  <div class="admin-section-body">
+    <p class="hint">
+      Отдельный источник от автоучастия по извещениям ЕИС.
+      При опросе монитора подходящие ПП конкурента ставятся в очередь; черновики создаются после poll (FIFO).
+      Файл: <code>{{ paths.auto_monitor_draft_settings }}</code>.
+      Env: {% if env_auto_monitor_draft_enabled %}включён{% else %}выключен{% endif %}
+      (<code>RTS_AUTO_MONITOR_DRAFT</code> — должен быть 1 на сервере).
+    </p>
+    <p class="hint">
+      Сумма ПП = цена за единицу × количество из карточки конкурента.
+      Фактически активно:
+      {% if auto_monitor_draft_enabled and env_auto_monitor_draft_enabled %}
+        <strong>да</strong>
+      {% else %}
+        <strong>нет</strong>{% if not env_auto_monitor_draft_enabled %} (выключено в env){% elif not auto_monitor_draft_enabled %} (выключено в настройках){% endif %}
+      {% endif %}
+    </p>
+
+    <form method="post" action="{{ request.url_for('action_admin_auto_monitor_draft_save') }}" class="preoffer-form">
+      <label class="checkbox-row">
+        <input type="checkbox" name="enabled" value="1" {% if auto_monitor_draft_form.enabled %}checked{% endif %}>
+        <span>Включено</span>
+      </label>
+      <label class="checkbox-row">
+        <input type="checkbox" name="auto_publish" value="1" {% if auto_monitor_draft_form.auto_publish %}checked{% endif %}>
+        <span>Автопубликация</span>
+      </label>
+      <p class="hint">
+        Если автопубликация включена: после черновика выполняется prepare (`awaiting_signature`).
+        Оператор держит открытой вкладку сервиса на ПК с ЭЦП поставщика: первый раз — выбор сертификата
+        (сохраняется в браузере), дальше подпись без confirm. Нужны
+        <code>RTS_PP_PUBLISH_ENABLED=1</code> и плагин КриптоПро.
+      </p>
+      <label>
+        <span>Коды КТРУ (по строке)</span>
+        <textarea name="ktru_codes_text" rows="5" spellcheck="false" placeholder="27.51.11.110-00000009">{{ auto_monitor_draft_form.ktru_codes_text }}</textarea>
+      </label>
+      <label>
+        <span>Сумма ПП от, ₽</span>
+        <input type="text" name="min_pp_amount" value="{{ auto_monitor_draft_form.min_pp_amount }}" inputmode="decimal" placeholder="200000" autocomplete="off" required>
+      </label>
+      <label>
+        <span>Макс. черновиков в час</span>
+        <input type="number" name="max_per_hour" value="{{ auto_monitor_draft_form.max_per_hour }}" min="1" max="100">
+      </label>
+      <input type="hidden" name="rts_profile" value="{{ auto_monitor_draft_form.rts_profile }}">
+      <div class="eis-submit-row">
+        <button type="submit">Сохранить</button>
+      </div>
+    </form>
+
+    <div class="eis-submit-row">
+      {% if auto_monitor_draft_enabled %}
+      <form method="post" action="{{ request.url_for('action_admin_auto_monitor_draft_toggle') }}" class="eis-inline-form">
+        <input type="hidden" name="enabled" value="0">
+        <button type="submit">Выключить</button>
+      </form>
+      {% else %}
+      <form method="post" action="{{ request.url_for('action_admin_auto_monitor_draft_toggle') }}" class="eis-inline-form">
+        <input type="hidden" name="enabled" value="1">
+        <button type="submit">Включить</button>
+      </form>
+      {% endif %}
+    </div>
+
+    {% if auto_monitor_draft_queue and auto_monitor_draft_queue|length > 0 %}
+    <h4>Очередь (последние)</h4>
+    <table class="eis-table">
+      <thead>
+        <tr>
+          <th>Обновлено</th>
+          <th>ПП</th>
+          <th>КТРУ</th>
+          <th>Сумма</th>
+          <th>Статус</th>
+          <th>Черновик / ошибка</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in auto_monitor_draft_queue %}
+        <tr>
+          <td>{{ row.updated_at_utc or '—' }}</td>
+          <td><code>{{ row.offer_price_list_item_id }}</code></td>
+          <td><code>{{ row.ktru_code or '—' }}</code></td>
+          <td>{% if row.pp_sum is not none %}{{ row.pp_sum }}{% else %}—{% endif %}</td>
+          <td>{{ row.status }}</td>
+          <td>
+            {% if row.rts_draft_id %}<code>{{ row.rts_draft_id }}</code>{% endif %}
+            {% if row.error_text %} {{ row.error_text }}{% endif %}
+            {% if not row.rts_draft_id and not row.error_text %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="hint">Очередь пуста.</p>
+    {% endif %}
   </div>
 </details>
 

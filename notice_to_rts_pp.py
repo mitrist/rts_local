@@ -263,10 +263,20 @@ def parse_notice_value(value_display: str) -> dict[str, Any]:
     max_xml = re.search(r"\bмакс\s+(\d+(?:[.,]\d+)?)", low)
     if min_xml:
         result["minValue"] = min_xml.group(1).replace(".", ",")
-        result["minMathNotation"] = "ge"
+        if re.search(r"greaterorequal|greater\s*or\s*equal", low):
+            result["minMathNotation"] = "ge"
+        elif re.search(r"\bgreater\b", low):
+            result["minMathNotation"] = "gt"
+        else:
+            result["minMathNotation"] = "ge"
     if max_xml:
         result["maxValue"] = max_xml.group(1).replace(".", ",")
-        result["maxMathNotation"] = "le"
+        if re.search(r"lessorequal|less\s*or\s*equal", low):
+            result["maxMathNotation"] = "le"
+        elif re.search(r"\bless\b", low):
+            result["maxMathNotation"] = "lt"
+        else:
+            result["maxMathNotation"] = "le"
     if result["minValue"] or result["maxValue"]:
         return result
 

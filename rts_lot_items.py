@@ -303,7 +303,8 @@ def fetch_lot_items_search_paged(
     referer_page: str = DEFAULT_APP_REFERER,
 ) -> dict[str, Any]:
     """POST …/lot-items/search/paged — нужна та же Cookie, что для ЛК поставщика."""
-    api_url = DEFAULT_ORIGIN + LOT_ITEMS_SEARCH_PAGED_PATH
+    origin = str(session.headers.get("Origin") or DEFAULT_ORIGIN).rstrip("/") or DEFAULT_ORIGIN
+    api_url = origin + LOT_ITEMS_SEARCH_PAGED_PATH
     body = {"TradeId": int(trade_numeric_id), "PageNumber": page_number, "PageLength": page_length}
     r = session.post(
         api_url,
@@ -311,13 +312,16 @@ def fetch_lot_items_search_paged(
         headers={
             "Accept": "application/json, text/plain, */*",
             "Content-Type": "application/json;charset=UTF-8",
-            "Origin": DEFAULT_ORIGIN,
-            "Referer": f"{DEFAULT_ORIGIN}/supplier/lk/{referer_page}",
+            "Origin": origin,
+            "Referer": f"{origin}/supplier/lk/{referer_page}",
             "X-Requested-With": "XMLHttpRequest",
         },
         timeout=timeout,
     )
     if r.status_code != 200:
+        text = (r.text or "")[:400].lower()
+        if "anti-ddos" in text or "<html" in text:
+            raise RuntimeError(f"lot-items анти-DDoS HTTP {r.status_code} ({origin})")
         raise RuntimeError(f"lot-items HTTP {r.status_code}: {(r.text or '')[:400]}")
     try:
         parsed = json.loads(r.text)

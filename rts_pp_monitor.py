@@ -25,6 +25,7 @@ from rts_customer_pp_api import (
     build_search_payload,
     find_offer_item,
     load_customer_cookie,
+    parse_search_summary,
     probe_customer_session,
     search_registry_page,
 )
@@ -149,6 +150,7 @@ def _save_finding(
     find_item: dict[str, Any],
     *,
     source: str = "notify",
+    trigger_recompute: bool = True,
 ) -> None:
     upsert_pp_monitor_finding(
         db_path,
@@ -160,6 +162,7 @@ def _save_finding(
         unit_price=summary.unit_price,
         card_url=summary.card_url,
         source=source,
+        trigger_recompute=trigger_recompute,
     )
 
 
@@ -427,6 +430,7 @@ def _process_new_summary(
     summary: RegistryOfferSummary,
     *,
     db_path: Path,
+    meta_dir: Path,
     settings: dict[str, Any],
     cookie: str,
     known_global: set[str],
@@ -447,7 +451,15 @@ def _process_new_summary(
     if processed_new >= max_per_run:
         return processed_new
     find_item: dict[str, Any] | None = None
-    if notify_find_enabled() or senders:
+    need_find = bool(notify_find_enabled() or senders)
+    if not need_find:
+        try:
+            from auto_monitor_draft import auto_monitor_draft_env_enabled
+
+            need_find = auto_monitor_draft_env_enabled()
+        except Exception:
+            need_find = False
+    if need_find:
         try:
             find_item = find_offer_item(cookie, oid)
         except RtsCustomerPpApiError as exc:
@@ -456,6 +468,20 @@ def _process_new_summary(
             return processed_new
     if find_item:
         _save_finding(db_path, summary, find_item, source="notify")
+        try:
+            from auto_monitor_draft import try_enqueue_from_finding
+
+            if try_enqueue_from_finding(
+                db_path,
+                meta_dir,
+                offer_price_list_item_id=oid,
+                find_item=find_item,
+                ktru_code=str(summary.ktru_code or ""),
+                unit_price=summary.unit_price if isinstance(summary.unit_price, (int, float)) else None,
+            ):
+                result["auto_draft_enqueued"] = int(result.get("auto_draft_enqueued") or 0) + 1
+        except Exception as exc:  # noqa: BLE001
+            _LOG.warning("auto_monitor_draft enqueue failed for %s: %s", oid, exc)
     if senders:
         sent, failed = _notify_summary(
             summary,
@@ -493,6 +519,7 @@ def run_rts_pp_monitor_poll(
         "notify_failed": 0,
         "seeded": 0,
         "pages_fetched": 0,
+        "auto_draft_enqueued": 0,
     }
     if not settings.get("enabled") and not force:
         result["skipped"] = True
@@ -562,6 +589,7 @@ def run_rts_pp_monitor_poll(
                 processed_new = _process_new_summary(
                     summary,
                     db_path=db_path,
+                    meta_dir=meta_dir,
                     settings=settings,
                     cookie=cookie,
                     known_global=known_global,
@@ -592,3 +620,73 @@ def run_rts_pp_monitor_poll(
             result["notify_failed"],
         )
     return result
+
+
+def iter_json_objects(text: str) -> list[Any]:
+    """Parse one JSON value or several concatenated objects (paged registry dumps)."""
+    decoder = json.JSONDecoder()
+    out: list[Any] = []
+    idx = 0
+    n = len(text)
+    while idx < n:
+        while idx < n and text[idx].isspace():
+            idx += 1
+        if idx >= n:
+            break
+        obj, end = decoder.raw_decode(text, idx)
+        out.append(obj)
+        idx = end
+    return out
+
+
+def _page_items_from_blob(blob: Any) -> list[dict[str, Any]]:
+    if isinstance(blob, list):
+        return [x for x in blob if isinstance(x, dict)]
+    if isinstance(blob, dict):
+        page = blob.get("page")
+        if isinstance(page, list):
+            return [x for x in page if isinstance(x, dict)]
+        if blob.get("ktru") or blob.get("offerPriceListItemProtectedId") or blob.get("protectedOfferItemId"):
+            return [blob]
+    return []
+
+
+def import_registry_find_dump(
+    db_path: Path,
+    text: str,
+    *,
+    ktru_code: str = "",
+    source: str = "dump",
+) -> dict[str, Any]:
+    """Load customer-registry search pages into findings (prices/regions), not into EIS core."""
+    wanted = str(ktru_code or "").strip()
+    blobs = iter_json_objects(text)
+    seen: set[str] = set()
+    imported = 0
+    skipped = 0
+    filtered = 0
+    for blob in blobs:
+        for raw in _page_items_from_blob(blob):
+            summary = parse_search_summary(raw, ktru_code=wanted)
+            if summary is None:
+                skipped += 1
+                continue
+            if wanted and summary.ktru_code != wanted:
+                filtered += 1
+                continue
+            oid = summary.offer_price_list_item_id
+            if oid in seen:
+                continue
+            seen.add(oid)
+            _save_registry_row(db_path, summary)
+            _save_finding(db_path, summary, raw, source=source, trigger_recompute=False)
+            imported += 1
+    return {
+        "ok": True,
+        "blobs": len(blobs),
+        "imported": imported,
+        "skipped": skipped,
+        "filtered": filtered,
+        "ktru_code": wanted,
+        "source": source,
+    }

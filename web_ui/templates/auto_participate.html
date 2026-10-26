@@ -46,6 +46,16 @@
       <input type="checkbox" name="enabled" value="1" {% if form.enabled %}checked{% endif %}>
       <span>Включено для этого профиля</span>
     </label>
+    <label class="checkbox-row">
+      <input type="checkbox" name="auto_publish" value="1" {% if form.auto_publish %}checked{% endif %}>
+      <span>Автопубликация (prepare → подпись CryptoPro во вкладке сервиса)</span>
+    </label>
+    <p class="hint">
+      Create идёт через инструмент РТС (<code>creation-data</code> → <code>temporary/create</code>).
+      Для автопубликации нужны <code>RTS_PP_PUBLISH_ENABLED=1</code>, живая cookie и открытая вкладка сервиса с CryptoPro
+      (фон опрашивает задания со source <code>notice</code> и <code>auto_monitor</code>).
+      Без галочки «Автопубликация» автоучастие только создаёт черновик — полная цепочка тогда только через кнопку «ПП».
+    </p>
     <label>
       <span>Сумма позиции от, ₽</span>
       <input type="text" name="min_purchase_amount" value="{{ form.min_purchase_amount }}" inputmode="decimal" placeholder="200000" autocomplete="off" required>
@@ -96,15 +106,17 @@
         <td><code>{{ row.ktru_code or '—' }}</code></td>
         <td>
           {% if row.status == 'created' %}Создан
+          {% elif row.status == 'awaiting_signature' %}Ждёт подписи
+          {% elif row.status == 'published' %}Опубликован
           {% elif row.status == 'cookie_expired' %}Cookie
           {% elif row.status == 'skipped' %}Пропуск
           {% elif row.status == 'error' %}Ошибка
           {% else %}{{ row.status }}{% endif %}
         </td>
         <td>
-          {% if row.status == 'created' and row.edit_url %}
+          {% if row.status in ('created', 'awaiting_signature', 'published') and row.edit_url %}
             <a href="{{ row.edit_url }}" target="_blank" rel="noopener">{{ row.rts_draft_id or 'РТС' }}</a>
-          {% elif row.status == 'created' and row.rts_draft_id %}
+          {% elif row.status in ('created', 'awaiting_signature', 'published') and row.rts_draft_id %}
             <code>{{ row.rts_draft_id }}</code>
           {% else %}
             {{ row.error_text or '—' }}

@@ -1,0 +1,66 @@
+{
+    "contracts": [
+        {
+            "uid": "u1",
+            "number": "1",
+            "regionName": "Нижегородская область",
+            "contractSignDate": "2026-09-01T00:00:00+03:00",
+            "tru": {
+                "ktruCode": "31.01.11.150-00000021",
+                "price": 3000.0,
+                "characteristics": [
+                    {"name": "Вид материала спинки/сиденья", "value": "Пластик"}
+                ]
+            }
+        },
+        {
+            "uid": "u2",
+            "number": "2",
+            "regionName": "Москва",
+            "contractSignDate": "2026-09-02T00:00:00+03:00",
+            "tru": {
+                "ktruCode": "31.01.11.150-00000021",
+                "price": 3100.0,
+                "characteristics": [
+                    {"name": "Вид материала спинки/сиденья", "value": "Пластик"}
+                ]
+            }
+        }
+    ],
+    "total": 3,
+    "hasMore": true
+}
+{
+    "contracts": [
+        {
+            "uid": "u3",
+            "number": "3",
+            "regionName": "Санкт-Петербург",
+            "contractSignDate": "2026-09-03T00:00:00+03:00",
+            "tru": {
+                "ktruCode": "31.01.11.150-00000021",
+                "price": 2800.0,
+                "characteristics": [
+                    {"name": "Вид материала спинки/сиденья", "value": "Фанера"},
+                    {"name": "Регулировка по высоте", "value": "Да"},
+                    {"name": "Ростовая группа", "value": "5"}
+                ]
+            }
+        },
+        {
+            "uid": "u4",
+            "number": "4",
+            "regionName": "Липецкая область",
+            "contractSignDate": "2026-09-04T00:00:00+03:00",
+            "tru": {
+                "ktruCode": "31.01.11.150-00000021",
+                "price": 2700.0,
+                "characteristics": [
+                    {"name": "Цвет обивки", "value": "Синий"}
+                ]
+            }
+        }
+    ],
+    "total": 3,
+    "hasMore": false
+}

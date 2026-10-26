@@ -179,14 +179,39 @@ def _first_meaningful_text_after(start: Tag, title_norm: str) -> str:
     return ""
 
 
+def _section_value_by_title_prefix(soup: BeautifulSoup, prefix: str) -> str:
+    """Match section title that starts with ``prefix`` (long EIS labels)."""
+    wanted = _norm_key(prefix)
+    if not wanted:
+        return ""
+    for section in soup.find_all("section", class_=lambda c: c and "blockInfo__section" in str(c)):
+        if not isinstance(section, Tag):
+            continue
+        title_el = section.find(class_=lambda c: c and "section__title" in str(c))
+        if not isinstance(title_el, Tag):
+            continue
+        title_norm = _norm_key(title_el.get_text(" ", strip=True))
+        if not title_norm.startswith(wanted):
+            continue
+        info_el = section.find(class_=lambda c: c and "section__info" in str(c))
+        if isinstance(info_el, Tag):
+            return _clean_text(info_el.get_text(" ", strip=True))
+    return ""
+
+
 def parse_notice_common_info_context(html: str) -> dict[str, str]:
     soup = BeautifulSoup(html or "", "html.parser")
+    etp_name = _section_value_by_title(
+        soup,
+        "Наименование электронной площадки в информационно-телекоммуникационной сети «Интернет»",
+    ) or _section_value_by_title_prefix(soup, "Наименование электронной площадки")
     return {
         "contract_start_date": _section_value_by_title(soup, "Дата начала исполнения контракта"),
         "contract_execution_term": _section_value_by_title(soup, "Срок исполнения контракта"),
         "region": _section_value_by_title(soup, "Регион"),
         "delivery_place": _section_value_by_title(soup, "Место поставки товара"),
         "delivery_days": _section_value_by_title(soup, "Срок поставки товара (календарных дней)"),
+        "etp_name": etp_name,
     }
 
 

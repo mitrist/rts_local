@@ -19,6 +19,8 @@ TLS к ЕИС: EIS_WEB_SSL_LEGACY=1 и/или EIS_WEB_TLS_MAX_12=1; int44: EIS_L
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import inspect
 import json
 import logging
 import os
@@ -33,6 +35,10 @@ from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import quote_plus, urlencode
 
+from web_ui.os_trust import install_os_trust_store
+
+install_os_trust_store()
+
 from fastapi import Depends, FastAPI, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -41,10 +47,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from starlette.templating import Jinja2Templates
 
 from pp_stack import stack_key as pp_stack_key
-from auto_participate import run_auto_participate_after_html
+from auto_participate import notice_has_auto_participate_ktru, run_auto_participate_after_html
 from auto_participate_settings import (
+    allowed_etp_names,
+    apply_admin_allowed_etp_names,
     apply_admin_global_enabled,
     count_enabled_profiles,
+    etp_names_text_from_settings,
     form_from_profile_rules,
     global_enabled,
     load_settings as load_auto_participate_settings,
@@ -53,6 +62,15 @@ from auto_participate_settings import (
     save_settings as save_auto_participate_settings,
     settings_path as auto_participate_settings_path,
     update_profile_in_settings,
+)
+from auto_monitor_draft_settings import (
+    apply_enabled as apply_auto_monitor_draft_enabled,
+    form_from_settings as auto_monitor_draft_form_from_settings,
+    global_enabled as auto_monitor_draft_global_enabled,
+    load_settings as load_auto_monitor_draft_settings,
+    parse_form_settings as parse_auto_monitor_draft_form,
+    save_settings as save_auto_monitor_draft_settings,
+    settings_path as auto_monitor_draft_settings_path,
 )
 from eis_analytics_db import (
     DEFAULT_DB_NAME,
@@ -68,6 +86,9 @@ from eis_analytics_db import (
     get_auto_participate_attempt,
     get_rts_pp_draft,
     list_auto_participate_attempts,
+    count_auto_monitor_draft_pending,
+    list_auto_monitor_draft_queue,
+    list_pp_publish_jobs,
     clear_pp_monitor_notifications,
     clear_pp_monitor_registry,
     backfill_pp_characteristics_hashes,
@@ -95,15 +116,20 @@ from eis_analytics_db import (
     list_pp_monitor_journal_with_findings,
     list_pp_monitor_recent,
     list_rts_pp_drafts,
+    get_pp_core_delivery,
+    list_pp_core_ktru_codes,
+    list_pp_core_variants,
     history_analytics_v2_summary,
     history_dashboard_summary,
     last_rss_poll_run,
+    list_notice_html_ktru_codes,
     notice_html_fetch_candidates,
     notice_html_payload,
     notice_line_for_pp,
     msk_day_bounds_utc,
     offer_matching_ktru_count,
     offer_matching_ktru_rows,
+    list_offer_matching_etp_names,
     offer_watch_candidates,
     record_offer_watch_notification,
     record_notice_html_page,
@@ -128,7 +154,13 @@ from eis_changelog import (
 from eis_ezt_poll import EisPollConfig, load_eis_state, parse_date_iso, run_eis_poll
 from eis_notice_html_fetch import fetch_notice_common_info_html
 from eis_notice_html_parse import parse_notice_common_info_html
-from eis_rss_poll import DEFAULT_QUERY_LABEL, DEFAULT_RSS_URL, EisRssConfig, run_eis_rss_poll
+from eis_rss_poll import (
+    DEFAULT_QUERY_LABEL,
+    DEFAULT_RSS_URL,
+    EisRssConfig,
+    run_eis_rss_catalog_ktru_poll,
+    run_eis_rss_poll,
+)
 from eis_supplier_characteristics import NullSupplierCharacteristicsSource, build_comparison_rows
 from eis_pp_link import format_lag_minutes
 from eis_pp_event_chain import build_pp_eis_event_chain
@@ -241,12 +273,70 @@ from rts_ktru_cache import (
     default_ktru_cache_ttl_sec,
     extend_ktru_cache_validity,
     extend_all_ktru_cache_validity,
+    get_ktru_template,
     import_ktru_template,
     is_ktru_template_cached,
     list_ktru_cache_status,
     load_cached_template,
+    search_ktru_for_wizard,
 )
-from rts_pp_draft_service import create_pp_draft_from_monitor, create_pp_draft_from_notice
+from pp_core_catalog import (
+    CHAIR_KTRU_CODE,
+    CoreSnapshotError,
+    cache_dir_from_meta,
+    default_core_ktru,
+    display_mapped_characteristics,
+    empty_price_stats,
+    mark_duplicate_selections,
+    refresh_core_snapshot,
+    resolve_ktru_template,
+    sync_core_snapshot_template,
+    variant_can_enqueue,
+)
+from rts_pp_application_api import RtsPpApplicationApiError
+from virtual_pp_poll import (
+    ingest_ezt_lk_dump,
+    load_supplier_cookie_file,
+    poll_virtual_pp,
+    publication_from_iso,
+)
+from virtual_pp_match import compare_virtual_notice_characteristics, region_offer_unit_price
+from virtual_pp_set import sync_virtual_set_from_core, virtual_set_payload
+from pp_virtual_queue import (
+    VirtualQueueError,
+    draft_virtual_from_notice,
+    enqueue_virtual_variants,
+    list_drafted_virtual_variants_for_match,
+    process_pp_virtual_queue,
+    queue_payload as pp_virtual_queue_payload,
+)
+from virtual_pp_store import (
+    get_rts_ezt_lot_item,
+    get_virtual_match_event,
+    get_virtual_pp_variant,
+    ktru_html_display_name,
+    list_unknown_regions,
+    list_virtual_match_events,
+    list_virtual_pp_ktru_codes,
+    load_notice_characteristics,
+    parse_char_status_override,
+    parse_winner_unit_price,
+    save_virtual_match_char_status_override,
+    save_virtual_match_winner_unit_price,
+    virtual_match_stats,
+)
+from pp_core_queue import (
+    CoreQueueError,
+    enqueue_core_variants,
+    process_pp_core_queue,
+    queue_payload as pp_core_queue_payload,
+)
+from pp_core_registry import frequent_subject_regions, price_ladders_for_variants
+from rts_pp_draft_service import (
+    create_pp_draft_from_catalog,
+    create_pp_draft_from_monitor,
+    create_pp_draft_from_notice,
+)
 from rts_pp_publish_service import (
     cancel_publish_job,
     get_publish_job_status,
@@ -303,6 +393,10 @@ _app_dir = Path(__file__).resolve().parent
 _project_root = Path(os.environ.get("RTS_PROJECT_ROOT", str(_app_dir.parent))).resolve()
 
 _COOKIE = Path(os.environ.get("RTS_COOKIE_FILE", str(_project_root / "cookies_rts.txt"))).resolve()
+_pp_core_drain_guard = asyncio.Lock()
+_pp_core_drain_active = False
+_pp_virtual_drain_guard = asyncio.Lock()
+_pp_virtual_drain_active = False
 
 
 def _rts_profile_for_request(request: Request) -> str:
@@ -400,11 +494,17 @@ _eis_rss_polling_now: bool = False
 _eis_rss_next_poll_unix: float | None = None
 _eis_html_auto_fetch_lock = threading.Lock()
 _eis_html_db_backoff_until: float = 0.0
-_eis_html_supervisor_sleep_sec: int = 5
+_eis_html_supervisor_sleep_sec: int = 3
+_catalog_ktru_rss_offset: int = 0
+_auto_participate_lock = threading.Lock()
+_auto_participate_supervisor_task: asyncio.Task[None] | None = None
 _rts_pp_monitor_lock = threading.Lock()
 _rts_pp_monitor_supervisor_task: asyncio.Task[None] | None = None
 _rts_pp_monitor_polling_now: bool = False
 _rts_pp_monitor_next_poll_unix: float | None = None
+_virtual_pp_lock = threading.Lock()
+_virtual_pp_supervisor_task: asyncio.Task[None] | None = None
+_virtual_pp_polling_now: bool = False
 _customer_monitor_probe_cache: dict[str, Any] | None = None
 _customer_monitor_probe_cached_at: float = 0.0
 _CUSTOMER_PROBE_CACHE_SEC = 900.0
@@ -440,6 +540,7 @@ def _read_eis_rss_settings() -> dict[str, Any]:
 
 def _save_eis_rss_settings() -> None:
     _META.mkdir(parents=True, exist_ok=True)
+    existing = _read_eis_rss_settings()
     payload = {
         "rss_url": _eis_rss_cron.rss_url,
         "query_label": _eis_rss_cron.query_label,
@@ -447,16 +548,47 @@ def _save_eis_rss_settings() -> None:
         "enabled": bool(_eis_rss_cron.enabled),
         "saved_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     }
+    if "html_fetch_min_price" in existing:
+        payload["html_fetch_min_price"] = existing.get("html_fetch_min_price")
     path = _eis_rss_settings_path()
     tmp = path.with_name(f"{path.name}.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp.replace(path)
 
 
+def _html_fetch_min_price() -> float | None:
+    """NMCK threshold for auto HTML fetch; None/0 = no filter."""
+    env_raw = os.environ.get("EIS_HTML_FETCH_MIN_PRICE", "").strip()
+    if env_raw:
+        try:
+            value = float(env_raw.replace(",", ".").replace(" ", ""))
+            return value if value > 0 else None
+        except ValueError:
+            pass
+    data = _read_eis_rss_settings()
+    raw = data.get("html_fetch_min_price")
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def _html_fetch_min_price_form_value() -> str:
+    amount = _html_fetch_min_price()
+    if amount is None:
+        return ""
+    if float(amount) == int(float(amount)):
+        return str(int(amount))
+    return str(amount).replace(".", ",")
+
+
 @dataclass
 class EisRssCronState:
     enabled: bool = False
-    interval_sec: int = 30
+    interval_sec: int = 20
     rss_url: str = _CURRENT_RSS_URL_DEFAULT
     query_label: str = DEFAULT_QUERY_LABEL
 
@@ -485,7 +617,7 @@ _eis_rss_cron = EisRssCronState(
         "enabled",
         os.environ.get("EIS_RSS_CRON_ENABLED", "").strip().lower() in ("1", "true", "yes"),
     ),
-    interval_sec=max(30, int(os.environ.get("EIS_RSS_CRON_INTERVAL_SEC", str(_rss_saved_int("interval_sec", 30))))),
+    interval_sec=max(20, int(os.environ.get("EIS_RSS_CRON_INTERVAL_SEC", str(_rss_saved_int("interval_sec", 20))))),
     rss_url=(
         os.environ.get("EIS_RSS_URL")
         or (
@@ -574,6 +706,20 @@ def _country_origin_row_payload(row: CountryOriginRow) -> dict[str, Any]:
 
 _templates = Jinja2Templates(directory=str(_app_dir / "templates"))
 _templates.env.filters["utc_iso_web"] = format_utc_iso_msk_clean
+_TEMPLATE_RESPONSE_WANTS_REQUEST = (
+    next(
+        (name for name in inspect.signature(_templates.TemplateResponse).parameters if name != "self"),
+        "",
+    )
+    == "request"
+)
+
+
+def _template_response(request: Request, name: str, ctx: dict[str, Any]):
+    ctx.setdefault("request", request)
+    if _TEMPLATE_RESPONSE_WANTS_REQUEST:
+        return _templates.TemplateResponse(request, name, ctx)
+    return _templates.TemplateResponse(name, ctx)
 
 Auth = Annotated[str, Depends(require_session)]
 SettingsAdmin = Annotated[str, Depends(require_settings_admin)]
@@ -581,6 +727,10 @@ SettingsAdmin = Annotated[str, Depends(require_settings_admin)]
 
 def _auto_participate_settings_path() -> Path:
     return auto_participate_settings_path(_META)
+
+
+def _auto_monitor_draft_settings_path() -> Path:
+    return auto_monitor_draft_settings_path(_META)
 
 
 def _pp_monitor_settings_path() -> Path:
@@ -775,12 +925,27 @@ def _run_rts_pp_monitor_poll_once(*, force: bool = False) -> dict[str, Any]:
             senders = [s for s in senders if s[0] != TELEGRAM_PP_MONITOR_CHANNEL]
         elif not max_on:
             senders = [s for s in senders if s[0] != MAX_PP_MONITOR_CHANNEL]
-        return run_rts_pp_monitor_poll(
+        return_result = run_rts_pp_monitor_poll(
             _META,
             _eis_analytics_db_path(),
             force=force,
             senders=senders or None,
         )
+        try:
+            from auto_monitor_draft import drain_summary_as_dict, process_auto_monitor_draft_queue
+
+            drain = process_auto_monitor_draft_queue(
+                _META,
+                _eis_analytics_db_path(),
+                project_root=_project_root,
+                preoffers_path=_rts_preoffers_path(),
+                limit=5,
+            )
+            return_result = {**return_result, "auto_monitor_draft": drain_summary_as_dict(drain)}
+        except Exception as exc:
+            logging.getLogger("web_ui").warning("auto_monitor_draft queue drain failed: %s", exc)
+            return_result = {**return_result, "auto_monitor_draft_error": str(exc)[:300]}
+        return return_result
     finally:
         _rts_pp_monitor_lock.release()
 
@@ -802,6 +967,7 @@ def paths_dict(request: Request | None = None) -> dict[str, str]:
         "eis_rss_settings": str(_eis_rss_settings_path()),
         "notification_settings": str(_notification_settings_path()),
         "auto_participate_settings": str(_auto_participate_settings_path()),
+        "auto_monitor_draft_settings": str(_auto_monitor_draft_settings_path()),
         "pp_monitor_settings": str(_pp_monitor_settings_path()),
         "customer_monitor_cookie": str(_customer_monitor_cookie_path()),
         "ktru_cache": str(_KTRU_CACHE),
@@ -834,19 +1000,19 @@ def _catalog_ktru_codes() -> list[str]:
 
 
 def _pp_participate_eligibility(ktru_code: str) -> dict[str, Any]:
+    """UI gate for offer-matching «ПП» / Участвовать (RTS notice path — no local template)."""
     code = str(ktru_code or "").strip()
     in_catalog = code in set(_catalog_ktru_codes())
     in_pp_template = is_ktru_template_cached(_KTRU_CACHE, code) if code else False
     require_catalog = _pp_participate_require_preoffer_catalog()
+    # Characteristics come from RTS creation-data; local draft_ktru_dict is not required.
     if require_catalog:
-        can = bool(code and in_catalog and in_pp_template)
+        can = bool(code and in_catalog)
     else:
-        can = bool(code and in_pp_template)
+        can = bool(code)
     reason = ""
     if code and require_catalog and not in_catalog:
         reason = "КТРУ нет в справочнике предложений."
-    elif code and not in_pp_template:
-        reason = "КТРУ нет в справочнике шаблонов ПП (draft_ktru_dict)."
     return {
         "can_participate": can,
         "participate_reason": reason,
@@ -926,13 +1092,18 @@ def _offer_match_payload_for_lines(lines: list[dict[str, Any]]) -> list[dict[str
     offers = _load_rts_preoffers()
     positions: list[dict[str, Any]] = []
     for line in lines:
+        code = str(line.get("ktru_code") or "").strip()
+        catalog_offers = preoffers_by_ktru(offers, code) if code else []
         if line.get("html_status") != "loaded" or not line.get("line_key"):
             results = []
         else:
-            matching_offers = preoffers_by_ktru(offers, str(line.get("ktru_code") or ""))
-            results = rank_offer_matches(line.get("characteristics") or [], matching_offers)
+            results = rank_offer_matches(line.get("characteristics") or [], catalog_offers)
         best = results[0] if results else None
         position = dict(line)
+        if not str(position.get("position_display_name") or "").strip() and catalog_offers:
+            title = str(catalog_offers[0].title or "").strip()
+            if title:
+                position["position_display_name"] = title
         position["matches"] = [r.as_dict() for r in results]
         position["best_match"] = best.as_dict() if best else None
         position["has_passing_offer"] = bool(best and best.passes)
@@ -949,6 +1120,7 @@ def _offer_matching_rows_with_summary(
     ktru_query: str | None = None,
     ktru_queries: list[str] | None = None,
     catalog_ktru_codes: list[str] | None = None,
+    etp_name: str | None = None,
     pub_from_utc: str | None = None,
     pub_to_utc: str | None = None,
 ) -> list[dict[str, Any]]:
@@ -959,6 +1131,7 @@ def _offer_matching_rows_with_summary(
         ktru_query=ktru_query,
         ktru_queries=ktru_queries,
         catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_name,
         pub_from_utc=pub_from_utc,
         pub_to_utc=pub_to_utc,
     )
@@ -1216,6 +1389,141 @@ def _pp_publish_enabled() -> bool:
     return pp_publish_enabled()
 
 
+def _pp_core_variant_api(row: dict[str, Any], ladder: dict[str, Any] | None = None) -> dict[str, Any]:
+    share = row.get("share")
+    try:
+        share_f = float(share) if share is not None else 0.0
+    except (TypeError, ValueError):
+        share_f = 0.0
+    status = str(row.get("map_status") or "")
+    stats = ladder if isinstance(ladder, dict) else empty_price_stats()
+    top5 = stats.get("top5") if isinstance(stats.get("top5"), dict) else empty_price_stats()["top5"]
+    return {
+        "variant_no": int(row.get("variant_no") or 0),
+        "eis_hash": str(row.get("eis_hash") or ""),
+        "n": int(row.get("n") or 0),
+        "share": share_f,
+        "share_pct": round(100.0 * share_f, 2),
+        "map_status": status,
+        "map_reason": str(row.get("map_reason") or ""),
+        "chars_preview": str(row.get("chars_preview") or ""),
+        "can_enqueue": variant_can_enqueue(row),
+        "rts_dup_of": int(row["rts_dup_of"]) if row.get("rts_dup_of") else None,
+        "characteristics": row.get("characteristics") if isinstance(row.get("characteristics"), list) else [],
+        "price_ladder": stats.get("price_ladder") if isinstance(stats.get("price_ladder"), list) else [],
+        "pp_n": int(stats.get("pp_n") or 0),
+        "rungs": int(stats.get("rungs") or 0),
+        "top5": top5,
+    }
+
+
+def _variant_ladder_fields(stats: dict[str, Any] | None) -> dict[str, Any]:
+    empty = empty_price_stats()
+    data = stats if isinstance(stats, dict) else empty
+    top5 = data.get("top5") if isinstance(data.get("top5"), dict) else empty["top5"]
+    return {
+        "price_ladder": data.get("price_ladder") if isinstance(data.get("price_ladder"), list) else [],
+        "pp_n": int(data.get("pp_n") or 0),
+        "rungs": int(data.get("rungs") or 0),
+        "top5": top5,
+    }
+
+
+def _price_ladders_for_virtual_set(code: str, variants: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+    db = _eis_analytics_db_path()
+    tmpl = resolve_ktru_template(code, cache_dir=cache_dir_from_meta(_META))
+    core_by_hash = {
+        str(row.get("eis_hash") or "").strip(): row
+        for row in list_pp_core_variants(db, code)
+        if str(row.get("eis_hash") or "").strip()
+    }
+    enriched: list[dict[str, Any]] = []
+    for row in variants:
+        item = dict(row)
+        core = core_by_hash.get(str(item.get("eis_hash") or "").strip())
+        if isinstance(core, dict) and isinstance(core.get("core_meta"), dict):
+            item["core_meta"] = core["core_meta"]
+        enriched.append(item)
+    return price_ladders_for_variants(db, code, enriched, tmpl)
+
+
+def _pp_core_variants_payload(code: str, rows: list[dict[str, Any]], meta: dict[str, Any] | None) -> dict[str, Any]:
+    db = _eis_analytics_db_path()
+    tmpl = resolve_ktru_template(code, cache_dir=cache_dir_from_meta(_META))
+    rows = sync_core_snapshot_template(db, code, tmpl) or rows
+    meta = _pp_core_meta_from_variants(rows) or meta
+    marked = mark_duplicate_selections([dict(row) for row in rows])
+    ladders = price_ladders_for_variants(db, code, marked, tmpl)
+    return {
+        "ok": True,
+        "ktru_code": code,
+        "ktru_codes": list_pp_core_ktru_codes(db),
+        "history_available": _eis_history_db_path().is_file(),
+        "meta": meta,
+        "variants": [
+            _pp_core_variant_api(row, ladders.get(int(row.get("variant_no") or 0)))
+            for row in marked
+        ],
+        "delivery": get_pp_core_delivery(db, code),
+    }
+
+
+def _pp_core_meta_from_variants(rows: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for row in rows:
+        meta = row.get("core_meta")
+        if isinstance(meta, dict) and meta:
+            return meta
+    return None
+
+
+async def _kick_pp_core_drain() -> None:
+    global _pp_core_drain_active
+    async with _pp_core_drain_guard:
+        if _pp_core_drain_active:
+            return
+        _pp_core_drain_active = True
+    try:
+        while True:
+            summary = await asyncio.to_thread(
+                process_pp_core_queue,
+                _META,
+                _eis_analytics_db_path(),
+                project_root=_project_root,
+                limit=1,
+            )
+            if int(getattr(summary, "processed", 0) or 0) < 1:
+                break
+    except Exception:
+        _LOG_WEB.exception("pp_core drain")
+    finally:
+        async with _pp_core_drain_guard:
+            _pp_core_drain_active = False
+
+
+async def _kick_pp_virtual_drain() -> None:
+    global _pp_virtual_drain_active
+    async with _pp_virtual_drain_guard:
+        if _pp_virtual_drain_active:
+            return
+        _pp_virtual_drain_active = True
+    try:
+        while True:
+            summary = await asyncio.to_thread(
+                process_pp_virtual_queue,
+                _META,
+                _eis_analytics_db_path(),
+                project_root=_project_root,
+                limit=1,
+            )
+            if int(getattr(summary, "processed", 0) or 0) < 1:
+                break
+    except Exception:
+        _LOG_WEB.exception("pp_virtual drain")
+    finally:
+        async with _pp_virtual_drain_guard:
+            _pp_virtual_drain_active = False
+
+
 def _pp_drafts_get_timeout_sec() -> float:
     try:
         return max(1.0, min(float(os.environ.get("RTS_PP_DRAFTS_GET_TIMEOUT_SEC", "5")), 30.0))
@@ -1302,6 +1610,28 @@ def _run_eis_ui_cron_poll() -> None:
     run_eis_poll(cfg)
 
 
+def _ingest_virtual_match_journal(purchase_number: str) -> None:
+    """Write every HTML KTRU line of a notice into the virtual match journal."""
+    pn = str(purchase_number or "").strip()
+    if not pn:
+        return
+    db = _eis_analytics_db_path()
+    codes = [c for c in list_notice_html_ktru_codes(db, pn) if c]
+    if not codes:
+        return
+    wanted = set(list_virtual_pp_ktru_codes(db))
+    if not wanted:
+        return
+    cache = cache_dir_from_meta(_META)
+    for code in codes:
+        if code not in wanted:
+            continue
+        try:
+            poll_virtual_pp(db, ktru_code=code, days=7, cache_dir=cache)
+        except Exception:
+            _LOG_WEB.exception("Журнал сопоставления: сбой после HTML %s %s", pn, code)
+
+
 def _fetch_and_store_notice_html(purchase_number: str, source_url: str, *, timeout: float) -> tuple[int, int]:
     html, status = fetch_notice_common_info_html(source_url, timeout=timeout)
     lines = parse_notice_common_info_html(html, purchase_number=purchase_number, source_url=source_url)
@@ -1315,6 +1645,10 @@ def _fetch_and_store_notice_html(purchase_number: str, source_url: str, *, timeo
         ok=True,
         http_status=status,
     )
+    try:
+        _ingest_virtual_match_journal(purchase_number)
+    except Exception:
+        _LOG_WEB.exception("Журнал сопоставления: не удалось разобрать %s", purchase_number)
     return len(lines), sum(len(x.characteristics) for x in lines)
 
 
@@ -1354,7 +1688,7 @@ def _auto_participate_created_attempts(
             line_key,
             rts_profile=profile,
         )
-        if attempt and attempt.get("status") == "created":
+        if attempt and attempt.get("status") in ("created", "awaiting_signature", "published"):
             out.append({**attempt, "rts_profile": profile})
     return out
 
@@ -1367,12 +1701,19 @@ def _auto_participate_notify_banner(
     if not attempts:
         return []
     profiles = [str(a.get("rts_profile") or "").strip() for a in attempts if str(a.get("rts_profile") or "").strip()]
-    if len(profiles) == 1:
-        text = f"🟢 Авто-участие ({profiles[0]}): создан черновик"
-    elif profiles:
-        text = f"🟢 Авто-участие ({', '.join(profiles)}): создан черновик"
+    statuses = {str(a.get("status") or "") for a in attempts}
+    if "published" in statuses:
+        label = "опубликовано"
+    elif "awaiting_signature" in statuses:
+        label = "черновик ждёт подписи"
     else:
-        text = "🟢 Авто-участие: создан черновик"
+        label = "создан черновик"
+    if len(profiles) == 1:
+        text = f"🟢 Авто-участие ({profiles[0]}): {label}"
+    elif profiles:
+        text = f"🟢 Авто-участие ({', '.join(profiles)}): {label}"
+    else:
+        text = f"🟢 Авто-участие: {label}"
     bold = html_bold if links == "html" else markdown_bold
     return [bold(text), ""]
 
@@ -1606,7 +1947,37 @@ def _draft_source_added_display_msk(db_path: Path, record: dict[str, Any]) -> st
     return display_compare_datetime_msk(link_raw)
 
 
+def _catalog_or_core_source(record: dict[str, Any]) -> str:
+    raw = str(record.get("fill_report_json") or "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                src = str(data.get("source") or "")
+                if src == "virtual_core":
+                    return "virtual_core"
+                if src == "core":
+                    return "core"
+        except json.JSONDecodeError:
+            pass
+    return "catalog"
+
+
 def _draft_item_name(db_path: Path, record: dict[str, Any]) -> str:
+    if str(record.get("purchase_number") or "") == "catalog" or str(record.get("draft_source") or "") in (
+        "catalog",
+        "core",
+        "virtual_core",
+    ):
+        raw = str(record.get("fill_report_json") or "").strip()
+        if raw:
+            try:
+                data = json.loads(raw)
+                if isinstance(data, dict):
+                    return str(data.get("ktru_name") or "").strip()
+            except json.JSONDecodeError:
+                pass
+        return ""
     if str(record.get("draft_source") or "") == "monitor":
         oid = str(record.get("offer_price_list_item_id") or "").strip()
         if oid:
@@ -1679,23 +2050,53 @@ def _pp_draft_display_row(record: dict[str, Any], *, rts_live: dict[str, Any] | 
         "offer_price_list_item_id": str(record.get("offer_price_list_item_id") or "").strip(),
         "rts_profile": str(record.get("rts_profile") or "").strip(),
         "item_name": str(record.get("item_name") or "").strip(),
+        "publish_source_key": "",
     }
     fill_raw = str(record.get("fill_report_json") or "").strip()
     if fill_raw:
         try:
             fill_data = json.loads(fill_raw)
             if isinstance(fill_data, dict):
-                matched = int(fill_data.get("matched") or 0)
-                unmatched = fill_data.get("unmatched_notice") or []
-                total = matched + len(unmatched) if isinstance(unmatched, list) else matched
-                row["fill_summary"] = f"{matched}/{total}" if total else ""
-                warnings: list[str] = []
-                if isinstance(unmatched, list) and unmatched:
-                    warnings.append(f"не сопоставлено: {len(unmatched)}")
-                unfilled = fill_data.get("unfilled_required") or []
-                if isinstance(unfilled, list) and unfilled:
-                    warnings.append(f"обязательные без значения: {len(unfilled)}")
-                row["fill_warnings"] = warnings
+                if str(fill_data.get("source") or "") in ("catalog", "core", "virtual_core") or draft_source in (
+                    "catalog",
+                    "core",
+                    "virtual_core",
+                ):
+                    regions_n = fill_data.get("regions_count")
+                    try:
+                        regions_n = int(regions_n)
+                    except (TypeError, ValueError):
+                        regions_n = 0
+                    bits: list[str] = []
+                    vn = fill_data.get("variant_no")
+                    if vn is not None and (
+                        str(fill_data.get("source") or "") in ("core", "virtual_core")
+                        or draft_source in ("core", "virtual_core")
+                    ):
+                        bits.append(f"#{vn}")
+                        if draft_source == "virtual_core" or str(fill_data.get("source") or "") == "virtual_core":
+                            bits.append("ядро" if int(fill_data.get("in_core") or 0) else "пояс")
+                    if regions_n:
+                        bits.append(f"{regions_n} рег.")
+                    row["fill_summary"] = " · ".join(bits) if bits else str(fill_data.get("ktru_name") or "").strip()
+                    if str(fill_data.get("source") or "") == "core" or draft_source == "core":
+                        rid = fill_data.get("run_id")
+                        if vn is not None and rid:
+                            row["publish_source_key"] = (
+                                f"core:{row['ktru_code']}:{vn}:{rid}"
+                            )
+                else:
+                    matched = int(fill_data.get("matched") or 0)
+                    unmatched = fill_data.get("unmatched_notice") or []
+                    total = matched + len(unmatched) if isinstance(unmatched, list) else matched
+                    row["fill_summary"] = f"{matched}/{total}" if total else ""
+                    warnings: list[str] = []
+                    if isinstance(unmatched, list) and unmatched:
+                        warnings.append(f"не сопоставлено: {len(unmatched)}")
+                    unfilled = fill_data.get("unfilled_required") or []
+                    if isinstance(unfilled, list) and unfilled:
+                        warnings.append(f"обязательные без значения: {len(unfilled)}")
+                    row["fill_warnings"] = warnings
         except json.JSONDecodeError:
             pass
     if not row["fill_summary"]:
@@ -1741,7 +2142,10 @@ def _load_pp_drafts_for_page(
     merged: list[dict[str, Any]] = []
     for record in notice_rows:
         item = dict(record)
-        item.setdefault("draft_source", "notice")
+        if str(item.get("purchase_number") or "") == "catalog":
+            item["draft_source"] = _catalog_or_core_source(item)
+        else:
+            item.setdefault("draft_source", "notice")
         merged.append(item)
     for record in monitor_rows:
         merged.append(_pp_monitor_draft_as_record(record))
@@ -1803,7 +2207,11 @@ def _load_pp_drafts_for_page(
         draft_id = record.get("rts_draft_id")
         row_profile = str(record.get("rts_profile") or "").strip()
         row_cookie = cookies_by_profile.get(row_profile) if admin_view else cookie
-        if row_cookie and draft_id and not rts_enrich_failed:
+        try:
+            live_draft_id = int(draft_id) if draft_id is not None else 0
+        except (TypeError, ValueError):
+            live_draft_id = 0
+        if row_cookie and live_draft_id > 0 and not rts_enrich_failed:
             try:
                 live = get_draft(row_cookie, int(draft_id), timeout=_pp_drafts_get_timeout_sec())
             except RtsPpApiError as exc:
@@ -1933,7 +2341,10 @@ def _rts_pp_draft_from_notice(
         price_ord_enabled=_participation_price_ord_enabled(),
     )
     if not result.ok and not result.already_existed:
-        raise HTTPException(status_code=result.http_status, detail=result.error)
+        detail: Any = result.error
+        if result.reason:
+            detail = {"message": result.error, "reason": result.reason}
+        raise HTTPException(status_code=result.http_status, detail=detail)
     return result.as_api_dict()
 
 
@@ -1976,7 +2387,11 @@ def _notify_auto_cookie_alert(_profile: str, message: str) -> None:
     send_telegram(message, tg_token, tg_chat, timeout)
 
 
-def _run_auto_participate_after_html() -> None:
+def _run_auto_participate_after_html(
+    *,
+    purchase_number: str | None = None,
+    amount_floor: float | None = None,
+) -> None:
     summary = run_auto_participate_after_html(
         analytics_db=_eis_analytics_db_path(),
         history_db=_eis_history_db_path(),
@@ -1985,16 +2400,19 @@ def _run_auto_participate_after_html() -> None:
         preoffers_path=_rts_preoffers_path(),
         price_ord_enabled=_participation_price_ord_enabled(),
         notify_cookie_alert=_notify_auto_cookie_alert,
+        purchase_number=purchase_number,
+        amount_floor=amount_floor if amount_floor is not None else _html_fetch_min_price(),
     )
     if (
         summary.profiles_checked
         or summary.created
         or summary.errors
         or summary.cookie_expired
+        or summary.publish_prepared
     ):
         _LOG_WEB.info(
             "Auto participate: profiles=%s created=%s existed=%s errors=%s cookie_expired=%s "
-            "skipped_rules=%s skipped_blocked=%s",
+            "skipped_rules=%s skipped_blocked=%s publish_prepared=%s pn=%s",
             summary.profiles_checked,
             summary.created,
             summary.already_existed,
@@ -2002,7 +2420,31 @@ def _run_auto_participate_after_html() -> None:
             summary.cookie_expired,
             summary.skipped_rules,
             summary.skipped_blocked,
+            summary.publish_prepared,
+            purchase_number or "*",
         )
+
+
+def _maybe_auto_participate_for_notice(purchase_number: str) -> None:
+    """Run auto-participate for one notice if any KTRU matches enabled profile rules."""
+    pn = str(purchase_number or "").strip()
+    if not pn:
+        return
+    if not _env_bool("RTS_AUTO_PARTICIPATE", False):
+        return
+    settings = load_auto_participate_settings(_auto_participate_settings_path())
+    if not global_enabled(settings):
+        return
+    codes = list_notice_html_ktru_codes(_eis_analytics_db_path(), pn)
+    offers = load_preoffers(_rts_preoffers_path())
+    if not notice_has_auto_participate_ktru(codes, settings=settings, offers=offers):
+        _LOG_WEB.info(
+            "Auto participate: skip %s — no KTRU in catalog/whitelist (codes=%s)",
+            pn,
+            len(codes),
+        )
+        return
+    _run_auto_participate_after_html(purchase_number=pn)
 
 
 def _auto_fetch_notice_html_after_rss_poll() -> None:
@@ -2011,25 +2453,38 @@ def _auto_fetch_notice_html_after_rss_poll() -> None:
         return
     if time.time() < _eis_html_db_backoff_until:
         return
+    catalog_codes = _catalog_ktru_codes()
+    if not catalog_codes:
+        return
     if not _eis_html_auto_fetch_lock.acquire(blocking=False):
         _LOG_WEB.info("ЕИС HTML auto-fetch: previous run is still active")
         return
     try:
         try:
-            limit = max(1, min(int(os.environ.get("EIS_HTML_AUTO_FETCH_MAX_PER_POLL", "10")), 100))
+            limit = max(1, min(int(os.environ.get("EIS_HTML_AUTO_FETCH_MAX_PER_POLL", "20")), 100))
         except ValueError:
-            limit = 10
+            limit = 20
         try:
             timeout = max(5.0, min(float(os.environ.get("EIS_HTML_FETCH_TIMEOUT_SEC", "30")), 120.0))
         except ValueError:
             timeout = 30.0
         try:
-            delay = max(0.0, min(float(os.environ.get("EIS_HTML_AUTO_FETCH_DELAY_SEC", "1.0")), 10.0))
+            delay = max(0.0, min(float(os.environ.get("EIS_HTML_AUTO_FETCH_DELAY_SEC", "0.1")), 10.0))
         except ValueError:
-            delay = 1.0
+            delay = 0.1
+        try:
+            workers = max(1, min(int(os.environ.get("EIS_HTML_AUTO_FETCH_WORKERS", "3")), 8))
+        except ValueError:
+            workers = 3
         retry_errors = _env_bool("EIS_HTML_AUTO_FETCH_RETRY_ERRORS", False)
         try:
-            candidates = notice_html_fetch_candidates(_eis_analytics_db_path(), limit=limit, retry_errors=retry_errors)
+            # Catalog KTRU only, no NMCK floor. Other KTRU: operator «Загрузить карточку».
+            candidates = notice_html_fetch_candidates(
+                _eis_analytics_db_path(),
+                limit=limit,
+                retry_errors=retry_errors,
+                catalog_ktru_codes=catalog_codes,
+            )
         except sqlite3.OperationalError as exc:
             _eis_html_db_backoff_until = time.time() + max(
                 30.0,
@@ -2046,16 +2501,18 @@ def _auto_fetch_notice_html_after_rss_poll() -> None:
             return
         fetched = 0
         failed = 0
-        for idx, row in enumerate(candidates):
+        lock = threading.Lock()
+
+        def _one(row: dict[str, Any]) -> None:
+            nonlocal fetched, failed
             pn = str(row.get("purchase_number") or "").strip()
             url_s = str(row.get("source_url") or "").strip()
             if not pn or not url_s:
-                continue
-            if idx > 0 and delay > 0:
-                time.sleep(delay)
+                return
             try:
                 lines_count, chars_count = _fetch_and_store_notice_html(pn, url_s, timeout=timeout)
-                fetched += 1
+                with lock:
+                    fetched += 1
                 _LOG_WEB.info(
                     "ЕИС HTML auto-fetch: карточка %s загружена, позиций=%s характеристик=%s",
                     pn,
@@ -2063,7 +2520,8 @@ def _auto_fetch_notice_html_after_rss_poll() -> None:
                     chars_count,
                 )
             except Exception as exc:  # noqa: BLE001
-                failed += 1
+                with lock:
+                    failed += 1
                 record_notice_html_page(
                     _eis_analytics_db_path(),
                     purchase_number=pn,
@@ -2076,17 +2534,66 @@ def _auto_fetch_notice_html_after_rss_poll() -> None:
                     error_text=str(exc)[:2000],
                 )
                 _LOG_WEB.warning("ЕИС HTML auto-fetch: ошибка карточки %s: %s", pn, exc)
-        _LOG_WEB.info("ЕИС HTML auto-fetch: done fetched=%s failed=%s candidates=%s", fetched, failed, len(candidates))
-        try:
-            _run_auto_participate_after_html()
-        except Exception:
-            _LOG_WEB.exception("Auto participate after HTML auto-fetch")
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = []
+            for idx, row in enumerate(candidates):
+                if idx > 0 and delay > 0:
+                    time.sleep(delay)
+                futs.append(pool.submit(_one, row))
+            for fut in as_completed(futs):
+                try:
+                    fut.result()
+                except Exception:
+                    _LOG_WEB.exception("ЕИС HTML auto-fetch worker")
+        _LOG_WEB.info(
+            "ЕИС HTML auto-fetch: done fetched=%s failed=%s candidates=%s workers=%s",
+            fetched,
+            failed,
+            len(candidates),
+            workers,
+        )
         try:
             _notify_preoffer_watch_matches()
         except Exception:
             _LOG_WEB.exception("Telegram preoffer watch after HTML auto-fetch")
     finally:
         _eis_html_auto_fetch_lock.release()
+
+
+def _run_catalog_ktru_rss_polls(cfg: EisRssConfig) -> None:
+    """Tag RSS notices with catalog KTRU via EIS search — no HTML download."""
+    global _catalog_ktru_rss_offset
+    if not _env_bool("EIS_RSS_CATALOG_KTRU", True):
+        return
+    codes = _catalog_ktru_codes()
+    if not codes:
+        return
+    try:
+        per = max(1, min(int(os.environ.get("EIS_RSS_CATALOG_KTRU_PER_POLL", "5")), 20))
+    except ValueError:
+        per = 5
+    n = len(codes)
+    start = _catalog_ktru_rss_offset % n
+    batch = [codes[(start + i) % n] for i in range(min(per, n))]
+    _catalog_ktru_rss_offset = (start + len(batch)) % n
+    db = _eis_analytics_db_path()
+    for code in batch:
+        try:
+            res = run_eis_rss_catalog_ktru_poll(cfg, db, code)
+            if res.ok:
+                _LOG_WEB.info(
+                    "ЕИС RSS КТРУ %s: total=%s new=%s",
+                    code,
+                    res.total_items,
+                    res.new_items,
+                )
+            else:
+                _LOG_WEB.warning("ЕИС RSS КТРУ %s: %s", code, "; ".join(res.errors))
+        except Exception:
+            _LOG_WEB.exception("ЕИС RSS КТРУ %s", code)
 
 
 def _run_eis_rss_ui_cron_poll() -> None:
@@ -2098,12 +2605,13 @@ def _run_eis_rss_ui_cron_poll() -> None:
     res = run_eis_rss_poll(cfg, _eis_analytics_db_path())
     if res.ok:
         _LOG_WEB.info("ЕИС RSS: poll ok total=%s new=%s run_id=%s", res.total_items, res.new_items, res.run_id)
-        try:
-            _auto_fetch_notice_html_after_rss_poll()
-        except Exception:
-            _LOG_WEB.exception("ЕИС HTML auto-fetch after RSS poll")
+        # HTML for catalog KTRU is fetched by the HTML supervisor; other KTRU — operator button.
     else:
         _LOG_WEB.warning("ЕИС RSS: poll errors=%s", "; ".join(res.errors))
+    try:
+        _run_catalog_ktru_rss_polls(cfg)
+    except Exception:
+        _LOG_WEB.exception("ЕИС RSS: опрос КТРУ справочника")
 
 
 async def _eis_supervisor_loop() -> None:
@@ -2187,7 +2695,7 @@ async def _eis_rss_supervisor_loop() -> None:
                     _eis_rss_next_poll_unix = None
                     await asyncio.sleep(0.5)
                     continue
-                interval = max(30, int(_eis_rss_cron.interval_sec))
+                interval = max(20, int(_eis_rss_cron.interval_sec))
                 _eis_rss_next_poll_unix = None
                 _eis_rss_polling_now = True
                 try:
@@ -2280,6 +2788,68 @@ async def _rts_pp_monitor_supervisor_loop() -> None:
         _rts_pp_monitor_polling_now = False
 
 
+def _virtual_pp_cookie_path() -> Path | None:
+    for profile in list_known_profiles():
+        path = _cookie_path_for_profile(profile)
+        if path.is_file():
+            return path
+    legacy = Path(os.environ.get("RTS_COOKIE_FILE", str(_project_root / "cookies_rts.txt")))
+    return legacy if legacy.is_file() else None
+
+
+def _run_virtual_pp_poll_once(*, ktru_code: str = "", days: int = 7, cookie_path: Path | None = None) -> dict[str, Any]:
+    if not _virtual_pp_lock.acquire(blocking=False):
+        return {"ok": False, "skipped": True, "reason": "busy"}
+    try:
+        del cookie_path
+        return poll_virtual_pp(
+            _eis_analytics_db_path(),
+            ktru_code=ktru_code,
+            days=days,
+            cache_dir=cache_dir_from_meta(_META),
+        )
+    finally:
+        _virtual_pp_lock.release()
+
+
+async def _virtual_pp_supervisor_loop() -> None:
+    global _virtual_pp_polling_now
+    await asyncio.sleep(8)
+    try:
+        while True:
+            try:
+                if cron_mode_enabled() or not _env_bool("VIRTUAL_PP_POLL", False):
+                    _virtual_pp_polling_now = False
+                    await asyncio.sleep(5.0)
+                    continue
+                interval_min = 20
+                try:
+                    env_interval = int(os.environ.get("VIRTUAL_PP_POLL_INTERVAL_MIN", "20"))
+                    if env_interval > 0:
+                        interval_min = env_interval
+                except ValueError:
+                    pass
+                _virtual_pp_polling_now = True
+                try:
+                    await asyncio.to_thread(_run_virtual_pp_poll_once, days=7)
+                except Exception:
+                    _LOG_WEB.exception("virtual PP poll supervisor")
+                finally:
+                    _virtual_pp_polling_now = False
+                deadline = time.time() + max(5, interval_min) * 60
+                while time.time() < deadline:
+                    if not _env_bool("VIRTUAL_PP_POLL", False):
+                        break
+                    await asyncio.sleep(min(5.0, max(0.5, deadline - time.time())))
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOG_WEB.exception("virtual PP supervisor")
+                await asyncio.sleep(30)
+    finally:
+        _virtual_pp_polling_now = False
+
+
 async def _eis_html_auto_fetch_supervisor_loop() -> None:
     global _eis_html_supervisor_sleep_sec
     await asyncio.sleep(2)
@@ -2292,10 +2862,10 @@ async def _eis_html_auto_fetch_supervisor_loop() -> None:
                 await asyncio.to_thread(_auto_fetch_notice_html_after_rss_poll)
                 try:
                     _eis_html_supervisor_sleep_sec = max(
-                        5, min(int(os.environ.get("EIS_HTML_AUTO_FETCH_SCAN_SEC", "5")), 300)
+                        2, min(int(os.environ.get("EIS_HTML_AUTO_FETCH_SCAN_SEC", "3")), 300)
                     )
                 except ValueError:
-                    _eis_html_supervisor_sleep_sec = 5
+                    _eis_html_supervisor_sleep_sec = 3
                 await asyncio.sleep(_eis_html_supervisor_sleep_sec)
             except asyncio.CancelledError:
                 raise
@@ -2308,16 +2878,58 @@ async def _eis_html_auto_fetch_supervisor_loop() -> None:
         raise
 
 
+def _run_auto_participate_queue_once() -> None:
+    """Separate queue: create/prepare PP for notices that already have HTML."""
+    if not _env_bool("RTS_AUTO_PARTICIPATE", False):
+        return
+    if not _auto_participate_lock.acquire(blocking=False):
+        _LOG_WEB.info("Auto participate queue: previous run is still active")
+        return
+    try:
+        _run_auto_participate_after_html(amount_floor=_html_fetch_min_price())
+    except Exception:
+        _LOG_WEB.exception("Auto participate queue")
+    finally:
+        _auto_participate_lock.release()
+
+
+async def _auto_participate_supervisor_loop() -> None:
+    await asyncio.sleep(3)
+    try:
+        while True:
+            try:
+                if not _env_bool("RTS_AUTO_PARTICIPATE", False):
+                    await asyncio.sleep(2.0)
+                    continue
+                await asyncio.to_thread(_run_auto_participate_queue_once)
+                try:
+                    sleep_sec = max(2, min(int(os.environ.get("RTS_AUTO_PARTICIPATE_SCAN_SEC", "3")), 60))
+                except ValueError:
+                    sleep_sec = 3
+                await asyncio.sleep(sleep_sec)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOG_WEB.exception("Auto participate supervisor")
+                await asyncio.sleep(10)
+    except asyncio.CancelledError:
+        raise
+
+
 @asynccontextmanager
 async def _app_lifespan(app: FastAPI):
-    global _eis_supervisor_task, _eis_rss_supervisor_task, _eis_html_supervisor_task, _rts_pp_monitor_supervisor_task
+    global _eis_supervisor_task, _eis_rss_supervisor_task, _eis_html_supervisor_task
+    global _auto_participate_supervisor_task, _rts_pp_monitor_supervisor_task
+    global _virtual_pp_supervisor_task
     app.state.analytics_db_path = str(_eis_analytics_db_path())
     _health_stop = asyncio.Event()
     _health_heartbeat_task = asyncio.create_task(heartbeat_loop(_health_stop))
     _eis_supervisor_task = asyncio.create_task(_eis_supervisor_loop())
     _eis_rss_supervisor_task = asyncio.create_task(_eis_rss_supervisor_loop())
     _eis_html_supervisor_task = asyncio.create_task(_eis_html_auto_fetch_supervisor_loop())
+    _auto_participate_supervisor_task = asyncio.create_task(_auto_participate_supervisor_loop())
     _rts_pp_monitor_supervisor_task = asyncio.create_task(_rts_pp_monitor_supervisor_loop())
+    _virtual_pp_supervisor_task = asyncio.create_task(_virtual_pp_supervisor_loop())
     yield
     _health_stop.set()
     _health_heartbeat_task.cancel()
@@ -2346,6 +2958,13 @@ async def _app_lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         _eis_html_supervisor_task = None
+    if _auto_participate_supervisor_task is not None:
+        _auto_participate_supervisor_task.cancel()
+        try:
+            await _auto_participate_supervisor_task
+        except asyncio.CancelledError:
+            pass
+        _auto_participate_supervisor_task = None
     if _rts_pp_monitor_supervisor_task is not None:
         _rts_pp_monitor_supervisor_task.cancel()
         try:
@@ -2353,6 +2972,13 @@ async def _app_lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         _rts_pp_monitor_supervisor_task = None
+    if _virtual_pp_supervisor_task is not None:
+        _virtual_pp_supervisor_task.cancel()
+        try:
+            await _virtual_pp_supervisor_task
+        except asyncio.CancelledError:
+            pass
+        _virtual_pp_supervisor_task = None
 
 
 def dashboard_context(request: Request) -> dict[str, Any]:
@@ -2649,13 +3275,17 @@ def _offer_matching_list_context(
     ktru_queries: list[str] | None,
     catalog_only: bool = False,
     show_catalog_filter: bool = False,
+    show_etp_filter: bool = False,
+    etp_query: str = "",
 ) -> dict[str, Any]:
     preoffers = _load_rts_preoffers()
     per_page = 30
+    etp_name = etp_query.strip() or None
     total_rows = offer_matching_ktru_count(
         _eis_analytics_db_path(),
         ktru_queries=ktru_queries,
         catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_name,
         pub_from_utc=pub_from_utc,
         pub_to_utc=pub_to_utc,
     )
@@ -2667,6 +3297,7 @@ def _offer_matching_list_context(
         offset=offset,
         ktru_queries=ktru_queries,
         catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_name,
         pub_from_utc=pub_from_utc,
         pub_to_utc=pub_to_utc,
     )
@@ -2677,9 +3308,14 @@ def _offer_matching_list_context(
         query_parts.append(f"ktru={quote_plus(ktru_query)}")
     if show_catalog_filter:
         query_parts.append("catalog=1" if catalog_only else "catalog=0")
+    if show_etp_filter and etp_query:
+        query_parts.append(f"etp={quote_plus(etp_query)}")
     base_query = "&".join(query_parts)
     if base_query:
         base_query += "&"
+    etp_options = list_offer_matching_etp_names(_eis_analytics_db_path())
+    if etp_query and etp_query not in etp_options:
+        etp_options = [etp_query, *etp_options]
     return {
         "request": request,
         "title": page_title,
@@ -2693,6 +3329,9 @@ def _offer_matching_list_context(
         "show_ktru_filter": show_ktru_filter,
         "show_date_filter": show_date_filter,
         "show_catalog_filter": show_catalog_filter,
+        "show_etp_filter": show_etp_filter,
+        "etp_query": etp_query,
+        "etp_options": etp_options,
         "catalog_only": catalog_only,
         "page_heading": page_heading,
         "page_hint": page_hint,
@@ -2710,9 +3349,13 @@ def _offer_matching_list_context(
                     f"По КТРУ «{ktru_query}» ничего не найдено."
                     if ktru_query
                     else (
-                        "Процедур с КТРУ из справочника предложений не найдено."
-                        if catalog_only
-                        else "RSS-наблюдений пока нет. Сначала включите монитор на странице «Извещения о закупке»."
+                        f"По площадке «{etp_query}» ничего не найдено."
+                        if etp_query
+                        else (
+                            "Процедур с КТРУ из справочника предложений не найдено."
+                            if catalog_only
+                            else "RSS-наблюдений пока нет. Сначала включите монитор на странице «Извещения о закупке»."
+                        )
                     )
                 )
             )
@@ -2741,10 +3384,12 @@ def page_offer_matching(
     page: Annotated[int, Query()] = 1,
     ktru: Annotated[str | None, Query()] = None,
     catalog: Annotated[str | None, Query()] = None,
+    etp: Annotated[str | None, Query()] = None,
 ) -> Any:
     ktru_query = (ktru or "").strip()
     ktru_queries = _parse_ktru_queries(ktru_query) or None
     catalog_only = _parse_catalog_only_param(catalog, default=True)
+    etp_query = (etp or "").strip()
     ctx = _offer_matching_list_context(
         request,
         page_route="page_offer_matching",
@@ -2755,9 +3400,11 @@ def page_offer_matching(
         show_ktru_filter=True,
         show_date_filter=False,
         show_catalog_filter=True,
+        show_etp_filter=True,
         catalog_only=catalog_only,
         selected_date="",
         ktru_query=ktru_query,
+        etp_query=etp_query,
         page_num=page,
         catalog_ktru_codes=_catalog_ktru_codes() if catalog_only else None,
         pub_from_utc=None,
@@ -2766,7 +3413,7 @@ def page_offer_matching(
     )
     ctx.update(web_auth_ui_context(request))
     ctx["pp_publish_enabled"] = _pp_publish_enabled()
-    return _templates.TemplateResponse("offer_matching.html", ctx)
+    return _template_response(request, "offer_matching.html", ctx)
 
 
 @app.get("/day-summary", name="page_day_summary")
@@ -2798,7 +3445,7 @@ def page_day_summary(
     )
     ctx.update(web_auth_ui_context(request))
     ctx["pp_publish_enabled"] = _pp_publish_enabled()
-    return _templates.TemplateResponse("offer_matching.html", ctx)
+    return _template_response(request, "offer_matching.html", ctx)
 
 
 @app.get("/notification-settings", name="page_notification_settings")
@@ -2883,7 +3530,8 @@ def action_auto_participate_save(
     request: Request,
     _: SettingsAdmin,
     profile: Annotated[str, Form()],
-    enabled: Annotated[str, Form()] = "",
+    enabled: Annotated[str | None, Form()] = None,
+    auto_publish: Annotated[str | None, Form()] = None,
     min_purchase_amount: Annotated[str, Form()] = "",
     ktru_mode: Annotated[str, Form()] = "catalog",
     ktru_codes_text: Annotated[str, Form()] = "",
@@ -2898,7 +3546,8 @@ def action_auto_participate_save(
         validate_rts_profile(selected)
         parsed = parse_form_profile_rules(
             {
-                "enabled": enabled,
+                "enabled": enabled or "",
+                "auto_publish": auto_publish or "",
                 "min_purchase_amount": min_purchase_amount,
                 "ktru_mode": ktru_mode,
                 "ktru_codes_text": ktru_codes_text,
@@ -2935,6 +3584,7 @@ def page_admin(
     notices_settings = load_notification_settings(_notification_settings_path())
     pp_settings = load_pp_monitor_settings(_pp_monitor_settings_path())
     auto_pp_settings = load_auto_participate_settings(_auto_participate_settings_path())
+    auto_monitor_draft = load_auto_monitor_draft_settings(_auto_monitor_draft_settings_path())
     try:
         _, default_tg_chat = telegram_creds_from_env_file(_EIS_ENV)
         _, default_max_chat = max_creds_from_env_file(_EIS_ENV)
@@ -2942,6 +3592,7 @@ def page_admin(
         default_tg_chat = ""
         default_max_chat = ""
     ktru_cache_rows = list_ktru_cache_status(_KTRU_CACHE)
+    amd_db = _eis_analytics_db_path()
     ctx: dict[str, Any] = {
         "request": request,
         "title": "Админка — RTS",
@@ -2962,7 +3613,16 @@ def page_admin(
         "auto_participate_global_enabled": global_enabled(auto_pp_settings),
         "auto_participate_enabled_profiles": count_enabled_profiles(auto_pp_settings),
         "auto_participate_profiles_total": len(list_known_profiles()),
+        "auto_participate_etp_names_text": etp_names_text_from_settings(auto_pp_settings),
+        "auto_participate_etp_count": len(allowed_etp_names(auto_pp_settings)),
         "env_auto_participate_enabled": _env_bool("RTS_AUTO_PARTICIPATE", False),
+        "auto_monitor_draft_form": auto_monitor_draft_form_from_settings(auto_monitor_draft),
+        "auto_monitor_draft_enabled": auto_monitor_draft_global_enabled(auto_monitor_draft),
+        "env_auto_monitor_draft_enabled": _env_bool("RTS_AUTO_MONITOR_DRAFT", False),
+        "auto_monitor_draft_pending": count_auto_monitor_draft_pending(amd_db),
+        "auto_monitor_draft_queue": list_auto_monitor_draft_queue(amd_db, limit=15),
+        "html_fetch_min_price": _html_fetch_min_price_form_value(),
+        "env_html_auto_fetch": _env_bool("EIS_HTML_AUTO_FETCH", True),
         "default_tg_chat": default_tg_chat,
         "default_max_chat": default_max_chat,
         "web_users": list_web_users_for_admin(_web_users_path()),
@@ -3151,6 +3811,119 @@ def action_admin_auto_participate_toggle(
         else "Автоучастие выключено для всех профилей."
     )
     return RedirectResponse(f"{back}#auto-participate-runtime", status_code=303)
+
+
+@app.post("/action/admin/auto-participate-etp-save", name="action_admin_auto_participate_etp_save")
+def action_admin_auto_participate_etp_save(
+    request: Request,
+    _: SettingsAdmin,
+    etp_names_text: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    back = request.url_for("page_admin")
+    path = _auto_participate_settings_path()
+    existing = load_auto_participate_settings(path)
+    updated = apply_admin_allowed_etp_names(existing, etp_names_text=etp_names_text)
+    updated["saved_at_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    save_auto_participate_settings(path, updated)
+    count = len(allowed_etp_names(updated))
+    request.session["admin_flash_ok"] = (
+        f"Площадки автоучастия сохранены ({count})."
+        if count
+        else "Площадки автоучастия очищены — разрешены все площадки."
+    )
+    return RedirectResponse(f"{back}#auto-participate-runtime", status_code=303)
+
+
+@app.post("/action/admin/html-fetch-min-price-save", name="action_admin_html_fetch_min_price_save")
+def action_admin_html_fetch_min_price_save(
+    request: Request,
+    _: SettingsAdmin,
+    html_fetch_min_price: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    back = request.url_for("page_admin")
+    raw = str(html_fetch_min_price or "").strip()
+    try:
+        if not raw:
+            amount: float | None = None
+        else:
+            amount = parse_min_purchase_amount(raw)
+    except ValueError as exc:
+        request.session["admin_flash_err"] = str(exc)
+        return RedirectResponse(f"{back}#html-fetch-min-price", status_code=303)
+    existing = _read_eis_rss_settings()
+    payload = {
+        "rss_url": existing.get("rss_url") or _eis_rss_cron.rss_url,
+        "query_label": existing.get("query_label") or _eis_rss_cron.query_label,
+        "interval_sec": int(existing.get("interval_sec") or _eis_rss_cron.interval_sec),
+        "enabled": bool(existing.get("enabled", _eis_rss_cron.enabled)),
+        "html_fetch_min_price": amount,
+        "saved_at_utc": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+    }
+    _META.mkdir(parents=True, exist_ok=True)
+    path = _eis_rss_settings_path()
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp.replace(path)
+    if amount is None:
+        request.session["admin_flash_ok"] = "Порог выгрузки HTML сброшен — качаются все извещения без HTML."
+    else:
+        request.session["admin_flash_ok"] = (
+            f"Выгрузка HTML для извещений от {int(amount) if amount == int(amount) else amount} ₽."
+        )
+    return RedirectResponse(f"{back}#html-fetch-min-price", status_code=303)
+
+
+@app.post("/action/admin/auto-monitor-draft-save", name="action_admin_auto_monitor_draft_save")
+def action_admin_auto_monitor_draft_save(
+    request: Request,
+    _: SettingsAdmin,
+    enabled: Annotated[str | None, Form()] = None,
+    auto_publish: Annotated[str | None, Form()] = None,
+    ktru_codes_text: Annotated[str, Form()] = "",
+    min_pp_amount: Annotated[str, Form()] = "",
+    max_per_hour: Annotated[str, Form()] = "10",
+    rts_profile: Annotated[str, Form()] = "IPSokolova",
+) -> RedirectResponse:
+    back = request.url_for("page_admin")
+    try:
+        parsed = parse_auto_monitor_draft_form(
+            {
+                "enabled": enabled or "",
+                "auto_publish": auto_publish or "",
+                "ktru_codes_text": ktru_codes_text,
+                "min_pp_amount": min_pp_amount,
+                "max_per_hour": max_per_hour,
+                "rts_profile": rts_profile,
+            }
+        )
+    except ValueError as exc:
+        request.session["admin_flash_err"] = str(exc)
+        return RedirectResponse(f"{back}#auto-monitor-draft-runtime", status_code=303)
+    parsed["saved_at_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    save_auto_monitor_draft_settings(_auto_monitor_draft_settings_path(), parsed)
+    request.session["admin_flash_ok"] = "Настройки авточерновика из монитора ПП сохранены."
+    return RedirectResponse(f"{back}#auto-monitor-draft-runtime", status_code=303)
+
+
+@app.post("/action/admin/auto-monitor-draft-toggle", name="action_admin_auto_monitor_draft_toggle")
+def action_admin_auto_monitor_draft_toggle(
+    request: Request,
+    _: SettingsAdmin,
+    enabled: Annotated[str, Form()],
+) -> RedirectResponse:
+    back = request.url_for("page_admin")
+    path = _auto_monitor_draft_settings_path()
+    existing = load_auto_monitor_draft_settings(path)
+    turn_on = str(enabled or "").strip().lower() in ("1", "on", "true", "yes")
+    updated = apply_auto_monitor_draft_enabled(existing, enabled=turn_on)
+    updated["saved_at_utc"] = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    save_auto_monitor_draft_settings(path, updated)
+    request.session["admin_flash_ok"] = (
+        "Авточерновик из монитора ПП включён."
+        if turn_on
+        else "Авточерновик из монитора ПП выключен."
+    )
+    return RedirectResponse(f"{back}#auto-monitor-draft-runtime", status_code=303)
 
 
 @app.post("/action/admin/web-user-save", name="action_admin_web_user_save")
@@ -4319,7 +5092,700 @@ def page_pp_drafts(
         "pp_publish_enabled": _pp_publish_enabled(),
     }
     ctx.update(web_auth_ui_context(request))
-    return _templates.TemplateResponse("pp_drafts.html", ctx)
+    return _templates.TemplateResponse(request, "pp_drafts.html", ctx)
+
+
+@app.get("/pp-create", name="page_pp_create")
+def page_pp_create(request: Request, _: Auth) -> Any:
+    ctx: dict[str, Any] = {
+        "request": request,
+        "title": "Создать ПП — RTS",
+        "active": "pp_create",
+        "paths": paths_dict(),
+        "pp_publish_enabled": _pp_publish_enabled(),
+    }
+    ctx.update(web_auth_ui_context(request))
+    return _templates.TemplateResponse(request, "pp_create.html", ctx)
+
+
+@app.get("/api/rts/ktru/search", name="api_rts_ktru_search")
+def api_rts_ktru_search(
+    request: Request,
+    _: Auth,
+    q: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    query = str(q or "").strip()
+    if len(query) < 2:
+        return {"ok": True, "items": []}
+    cache = cache_dir_default(_META)
+    cookie: str | None = None
+    try:
+        cookie = load_offers_cookie(_cookie_path_for_request(request))
+    except RtsPpApiError:
+        cookie = None
+    items, live_error = search_ktru_for_wizard(cookie, query, cache)
+    out: dict[str, Any] = {"ok": True, "items": items}
+    if live_error and not items:
+        raise HTTPException(status_code=502, detail=live_error)
+    if live_error:
+        out["cache_only"] = True
+        out["warning"] = live_error
+    return out
+
+
+@app.get("/api/rts/ktru/template", name="api_rts_ktru_template")
+def api_rts_ktru_template(
+    request: Request,
+    _: Auth,
+    code: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    from catalog_pp_draft import catalog_template_for_form
+
+    ktru_code = str(code or "").strip()
+    if not ktru_code:
+        raise HTTPException(status_code=400, detail="Укажите code.")
+    cache = cache_dir_default(_META)
+    try:
+        cookie = load_offers_cookie(_cookie_path_for_request(request))
+        item = get_ktru_template(cookie, ktru_code, cache)
+    except RtsPpApiError as exc:
+        stale = load_cached_template(cache, ktru_code, ttl_sec=0)
+        if stale is None:
+            status = 503 if exc.reason in ("no_cookie", "session_expired") else 502
+            if exc.reason in ("ktru_not_found", "ktru_catalog_unavailable"):
+                status = 404
+            raise HTTPException(status_code=status, detail=str(exc)) from exc
+        item = stale
+    return {"ok": True, "template": catalog_template_for_form(item)}
+
+
+@app.get("/api/rts/pp/oktmo-subjects", name="api_rts_pp_oktmo_subjects")
+def api_rts_pp_oktmo_subjects(_: Auth) -> dict[str, Any]:
+    from rts_oktmo_catalog import OktmoCatalogError, load_subject_oktmo
+
+    try:
+        rows = load_subject_oktmo()
+    except OktmoCatalogError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return {"ok": True, "items": [row.as_dict() for row in rows]}
+
+
+@app.post("/api/rts/pp/draft-from-catalog", name="api_rts_pp_draft_from_catalog")
+async def api_rts_pp_draft_from_catalog(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    created_by = str(request.session.get(SESSION_USER_KEY) or "").strip()
+    profile = _require_operator_rts_profile(request)
+    chars = body.get("characteristics")
+    regions = body.get("regions")
+    result = await asyncio.to_thread(
+        create_pp_draft_from_catalog,
+        analytics_db=_eis_analytics_db_path(),
+        meta_dir=_META,
+        cookie_path=_cookie_path_for_request(request),
+        ktru_code=str(body.get("ktru_code") or ""),
+        characteristics=chars if isinstance(chars, list) else [],
+        regions=regions if isinstance(regions, list) else [],
+        rts_profile=profile,
+        created_by=created_by,
+    )
+    if not result.ok:
+        raise HTTPException(status_code=result.http_status, detail=result.error)
+    payload = result.as_api_dict()
+    payload["source"] = "catalog"
+    if result.line_key:
+        payload["source_key"] = f"catalog:{result.line_key}"
+    return payload
+
+
+@app.get("/pp-core", name="page_pp_core")
+def page_pp_core(request: Request, _: Auth) -> Any:
+    db = _eis_analytics_db_path()
+    ctx: dict[str, Any] = {
+        "request": request,
+        "title": "Ядро КТРУ — RTS",
+        "active": "pp_core",
+        "paths": paths_dict(),
+        "pp_publish_enabled": _pp_publish_enabled(),
+        "default_ktru": default_core_ktru(db),
+        "history_available": _eis_history_db_path().is_file(),
+        "chair_ktru": CHAIR_KTRU_CODE,
+    }
+    ctx.update(web_auth_ui_context(request))
+    return _templates.TemplateResponse(request, "pp_core.html", ctx)
+
+
+@app.get("/api/rts/pp/core/variants", name="api_rts_pp_core_variants")
+def api_rts_pp_core_variants(
+    _: Auth,
+    ktru_code: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    db = _eis_analytics_db_path()
+    code = str(ktru_code or "").strip() or default_core_ktru(db)
+    rows = list_pp_core_variants(db, code)
+    meta = _pp_core_meta_from_variants(rows)
+    return _pp_core_variants_payload(code, rows, meta)
+
+
+@app.post("/api/rts/pp/core/refresh", name="api_rts_pp_core_refresh")
+async def api_rts_pp_core_refresh(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    code = str(body.get("ktru_code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Укажите ktru_code.")
+    cache = cache_dir_from_meta(_META)
+    template = None
+    try:
+        cookie = load_offers_cookie(_cookie_path_for_request(request))
+        template = get_ktru_template(cookie, code, cache)
+    except RtsPpApiError:
+        template = load_cached_template(cache, code, ttl_sec=0)
+    try:
+        result = await asyncio.to_thread(
+            refresh_core_snapshot,
+            _eis_analytics_db_path(),
+            _eis_history_db_path(),
+            code,
+            cache_dir=cache,
+            template=template,
+        )
+    except CoreSnapshotError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    rows = result.get("variants") if isinstance(result.get("variants"), list) else []
+    payload = _pp_core_variants_payload(code, rows, result.get("meta") if isinstance(result.get("meta"), dict) else None)
+    return payload
+
+
+@app.get("/api/rts/pp/core/frequent-regions", name="api_rts_pp_core_frequent_regions")
+def api_rts_pp_core_frequent_regions(
+    _: Auth,
+    ktru_code: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    db = _eis_analytics_db_path()
+    code = str(ktru_code or "").strip() or default_core_ktru(db)
+    from rts_oktmo_catalog import OktmoCatalogError
+
+    try:
+        return frequent_subject_regions(db, code)
+    except OktmoCatalogError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/rts/pp/core/enqueue", name="api_rts_pp_core_enqueue")
+async def api_rts_pp_core_enqueue(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    created_by = str(request.session.get(SESSION_USER_KEY) or "").strip()
+    profile = _require_operator_rts_profile(request)
+    nos = body.get("variant_nos")
+    regions = body.get("regions")
+    try:
+        result = enqueue_core_variants(
+            _eis_analytics_db_path(),
+            ktru_code=str(body.get("ktru_code") or ""),
+            variant_nos=nos if isinstance(nos, list) else [],
+            regions=regions if isinstance(regions, list) else [],
+            rts_profile=profile,
+            created_by=created_by,
+        )
+    except CoreQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    asyncio.create_task(_kick_pp_core_drain())
+    payload = result.as_api_dict()
+    payload.update(pp_core_queue_payload(_eis_analytics_db_path(), run_id=result.run_id))
+    payload["ok"] = True
+    payload["run_id"] = result.run_id
+    payload["enqueued"] = result.enqueued
+    payload["skipped"] = result.skipped
+    return payload
+
+
+@app.post("/api/rts/pp/core/drain", name="api_rts_pp_core_drain")
+async def api_rts_pp_core_drain(_: Auth) -> dict[str, Any]:
+    asyncio.create_task(_kick_pp_core_drain())
+    summary = await asyncio.to_thread(
+        process_pp_core_queue,
+        _META,
+        _eis_analytics_db_path(),
+        project_root=_project_root,
+        limit=1,
+    )
+    return {
+        "ok": True,
+        "processed": summary.processed,
+        "drafted": summary.drafted,
+        "publish_prepared": summary.publish_prepared,
+        "errors": summary.errors,
+        "stopped_reason": summary.stopped_reason,
+    }
+
+
+@app.get("/api/rts/pp/core/queue", name="api_rts_pp_core_queue")
+def api_rts_pp_core_queue(
+    _: Auth,
+    run_id: Annotated[str, Query()] = "",
+    ktru_code: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    return pp_core_queue_payload(
+        _eis_analytics_db_path(),
+        run_id=str(run_id or ""),
+        ktru_code=str(ktru_code or ""),
+    )
+
+
+def _virtual_default_ktru(db: Path) -> str:
+    codes = list_virtual_pp_ktru_codes(db) or list_pp_core_ktru_codes(db)
+    if codes:
+        return codes[0]
+    return default_core_ktru(db)
+
+
+def _format_ktru_option(code: str, name: str = "") -> str:
+    code = str(code or "").strip()
+    name = str(name or "").strip()
+    if name and name != code:
+        return f"{name} ({code})"
+    return code
+
+
+def _ktru_display_name(db: Path, code: str) -> str:
+    ktru = str(code or "").strip()
+    if not ktru:
+        return ""
+    tmpl = resolve_ktru_template(ktru, cache_dir=cache_dir_from_meta(_META))
+    if isinstance(tmpl, dict):
+        name = str(tmpl.get("name") or "").strip()
+        if name:
+            return name
+    return ktru_html_display_name(db, ktru)
+
+
+def _virtual_ktru_options(db: Path, *, virtual_only: bool = False) -> list[dict[str, str]]:
+    if virtual_only:
+        codes = list_virtual_pp_ktru_codes(db)
+    else:
+        codes = list(dict.fromkeys(list_virtual_pp_ktru_codes(db) + list_pp_core_ktru_codes(db)))
+    out: list[dict[str, str]] = []
+    for code in codes:
+        name = _ktru_display_name(db, code)
+        out.append({"code": code, "name": name, "label": _format_ktru_option(code, name)})
+    return out
+
+
+@app.get("/pp-virtual", name="page_pp_virtual")
+def page_pp_virtual(request: Request, _: Auth) -> Any:
+    db = _eis_analytics_db_path()
+    ctx: dict[str, Any] = {
+        "request": request,
+        "title": "Виртуальные ПП — RTS",
+        "active": "pp_virtual",
+        "paths": paths_dict(),
+        "default_ktru": _virtual_default_ktru(db),
+        "ktru_options": _virtual_ktru_options(db, virtual_only=True),
+    }
+    ctx.update(web_auth_ui_context(request))
+    return _template_response(request, "pp_virtual.html", ctx)
+
+
+@app.get("/pp-virtual/events", name="page_pp_virtual_events")
+def page_pp_virtual_events(request: Request, _: Auth) -> Any:
+    db = _eis_analytics_db_path()
+    ctx: dict[str, Any] = {
+        "request": request,
+        "title": "Журнал сопоставления — RTS",
+        "active": "pp_virtual_events",
+        "paths": paths_dict(),
+        "default_ktru": _virtual_default_ktru(db),
+        "ktru_options": _virtual_ktru_options(db, virtual_only=True),
+    }
+    ctx.update(web_auth_ui_context(request))
+    return _template_response(request, "pp_virtual_events.html", ctx)
+
+
+@app.get("/api/rts/pp/virtual/set", name="api_rts_pp_virtual_set")
+def api_rts_pp_virtual_set(
+    _: Auth,
+    ktru_code: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    db = _eis_analytics_db_path()
+    code = str(ktru_code or "").strip() or _virtual_default_ktru(db)
+    payload = virtual_set_payload(db, code)
+    known = list(dict.fromkeys(list_virtual_pp_ktru_codes(db) + list_pp_core_ktru_codes(db)))
+    payload["ktru_codes"] = known
+    variants = payload.get("variants") if isinstance(payload.get("variants"), list) else []
+    ladders = _price_ladders_for_virtual_set(code, variants)
+    attached: list[dict[str, Any]] = []
+    for row in variants:
+        if not isinstance(row, dict):
+            continue
+        item = dict(row)
+        try:
+            num = int(item.get("variant_no") or 0)
+        except (TypeError, ValueError):
+            num = 0
+        item.update(_variant_ladder_fields(ladders.get(num)))
+        attached.append(item)
+    payload["variants"] = attached
+    core_meta = _pp_core_meta_from_variants(list_pp_core_variants(db, code))
+    if isinstance(core_meta, dict) and core_meta.get("source"):
+        payload["meta"] = {"source": core_meta.get("source")}
+    return payload
+
+
+@app.post("/api/rts/pp/virtual/sync-set", name="api_rts_pp_virtual_sync_set")
+async def api_rts_pp_virtual_sync_set(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    code = str(body.get("ktru_code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Укажите ktru_code.")
+    try:
+        return sync_virtual_set_from_core(
+            _eis_analytics_db_path(),
+            code,
+            history_db=_eis_history_db_path(),
+            cache_dir=cache_dir_from_meta(_META),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/rts/pp/virtual/enqueue", name="api_rts_pp_virtual_enqueue")
+async def api_rts_pp_virtual_enqueue(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    created_by = str(request.session.get(SESSION_USER_KEY) or "").strip()
+    profile = _require_operator_rts_profile(request)
+    nos = body.get("variant_nos")
+    regions = body.get("regions")
+    try:
+        result = enqueue_virtual_variants(
+            _eis_analytics_db_path(),
+            ktru_code=str(body.get("ktru_code") or ""),
+            variant_nos=nos if isinstance(nos, list) else [],
+            regions=regions if isinstance(regions, list) else [],
+            rts_profile=profile,
+            created_by=created_by,
+        )
+    except VirtualQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    asyncio.create_task(_kick_pp_virtual_drain())
+    payload = result.as_api_dict()
+    payload.update(pp_virtual_queue_payload(_eis_analytics_db_path(), run_id=result.run_id))
+    payload["ok"] = True
+    payload["run_id"] = result.run_id
+    payload["enqueued"] = result.enqueued
+    payload["skipped"] = result.skipped
+    return payload
+
+
+@app.post("/api/rts/pp/virtual/drain", name="api_rts_pp_virtual_drain")
+async def api_rts_pp_virtual_drain(_: Auth) -> dict[str, Any]:
+    asyncio.create_task(_kick_pp_virtual_drain())
+    summary = await asyncio.to_thread(
+        process_pp_virtual_queue,
+        _META,
+        _eis_analytics_db_path(),
+        project_root=_project_root,
+        limit=1,
+    )
+    return {
+        "ok": True,
+        "processed": summary.processed,
+        "drafted": summary.drafted,
+        "errors": summary.errors,
+        "stopped_reason": summary.stopped_reason,
+    }
+
+
+@app.get("/api/rts/pp/virtual/queue", name="api_rts_pp_virtual_queue")
+def api_rts_pp_virtual_queue(
+    _: Auth,
+    run_id: Annotated[str, Query()] = "",
+    ktru_code: Annotated[str, Query()] = "",
+) -> dict[str, Any]:
+    return pp_virtual_queue_payload(
+        _eis_analytics_db_path(),
+        run_id=str(run_id or ""),
+        ktru_code=str(ktru_code or ""),
+    )
+
+
+@app.post("/api/rts/pp/virtual/poll", name="api_rts_pp_virtual_poll")
+async def api_rts_pp_virtual_poll(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    code = str(body.get("ktru_code") or "").strip()
+    try:
+        days = int(body.get("days") or 7)
+    except (TypeError, ValueError):
+        days = 7
+    try:
+        return await asyncio.to_thread(
+            _run_virtual_pp_poll_once,
+            ktru_code=code,
+            days=days,
+            cookie_path=_cookie_path_for_request(request),
+        )
+    except RtsPpApplicationApiError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/rts/pp/virtual/stats", name="api_rts_pp_virtual_stats")
+def api_rts_pp_virtual_stats(
+    _: Auth,
+    ktru_code: Annotated[str, Query()] = "",
+    days: Annotated[int, Query()] = 7,
+) -> dict[str, Any]:
+    db = _eis_analytics_db_path()
+    code = str(ktru_code or "").strip() or _virtual_default_ktru(db)
+    return virtual_match_stats(db, code, days=days)
+
+
+@app.get("/api/rts/pp/virtual/events", name="api_rts_pp_virtual_events")
+def api_rts_pp_virtual_events(
+    _: Auth,
+    ktru_code: Annotated[str, Query()] = "",
+    days: Annotated[int, Query()] = 7,
+    matched: Annotated[str, Query()] = "all",
+    limit: Annotated[int, Query()] = 500,
+) -> dict[str, Any]:
+    db = _eis_analytics_db_path()
+    code = str(ktru_code or "").strip()
+    want = str(matched or "all").strip().lower()
+    if want not in ("all", "yes", "no"):
+        want = "all"
+    events = list_virtual_match_events(db, code, days=days, matched=want, limit=limit)
+    names = {
+        str(row.get("ktru_code") or "").strip(): _ktru_display_name(db, str(row.get("ktru_code") or ""))
+        for row in events
+        if str(row.get("ktru_code") or "").strip()
+    }
+    attached: list[dict[str, Any]] = []
+    for row in events:
+        item = dict(row)
+        ktru = str(item.get("ktru_code") or "").strip()
+        item["ktru_name"] = names.get(ktru) or str(item.get("trade_name") or "").strip()
+        attached.append(item)
+    return {"ok": True, "ktru_code": code, "matched": want, "events": attached}
+
+
+@app.post("/api/rts/pp/virtual/events/winner-price", name="api_rts_pp_virtual_winner_price")
+async def api_rts_pp_virtual_winner_price(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    pn = str(body.get("notification_number") or "").strip()
+    code = str(body.get("ktru_code") or "").strip()
+    if not pn:
+        raise HTTPException(status_code=400, detail="Укажите номер извещения.")
+    try:
+        idx = int(body.get("line_index") or 0)
+    except (TypeError, ValueError):
+        idx = 0
+    try:
+        price = parse_winner_unit_price(body.get("winner_unit_price"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Некорректная цена победителя.") from exc
+    n = save_virtual_match_winner_unit_price(
+        _eis_analytics_db_path(),
+        notification_number=pn,
+        line_index=idx,
+        ktru_code=code,
+        winner_unit_price=price,
+    )
+    if n < 1:
+        raise HTTPException(status_code=404, detail="Строка журнала не найдена.")
+    return {"ok": True, "updated": n, "winner_unit_price": price}
+
+
+@app.post("/api/rts/pp/virtual/events/char-status", name="api_rts_pp_virtual_char_status")
+async def api_rts_pp_virtual_char_status(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    pn = str(body.get("notification_number") or "").strip()
+    code = str(body.get("ktru_code") or "").strip()
+    if not pn:
+        raise HTTPException(status_code=400, detail="Укажите номер извещения.")
+    try:
+        idx = int(body.get("line_index") or 0)
+    except (TypeError, ValueError):
+        idx = 0
+    try:
+        override = parse_char_status_override(body.get("char_status_override"))
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail="Некорректный статус совпадения.") from exc
+    n = save_virtual_match_char_status_override(
+        _eis_analytics_db_path(),
+        notification_number=pn,
+        line_index=idx,
+        ktru_code=code,
+        char_status_override=override,
+    )
+    if n < 1:
+        raise HTTPException(status_code=404, detail="Строка журнала не найдена.")
+    return {"ok": True, "updated": n, "char_status_override": override}
+
+
+def _virtual_variant_compare_prices(
+    db: Path,
+    *,
+    ktru_code: str,
+    variant_no: int,
+    notification_number: str,
+    line_index: int,
+) -> dict[str, Any]:
+    pn = str(notification_number or "").strip()
+    notice_price = None
+    offer_price = None
+    oktmo = ""
+    region_raw = ""
+    if not pn:
+        return {
+            "notice_unit_price": None,
+            "offer_unit_price": None,
+            "subject_oktmo": "",
+            "region_raw": "",
+        }
+    event = get_virtual_match_event(
+        db, notification_number=pn, line_index=line_index, ktru_code=ktru_code
+    )
+    if event:
+        notice_price = event.get("unit_price")
+        offer_price = event.get("offer_unit_price")
+        oktmo = str(event.get("subject_oktmo") or "")
+        region_raw = str(event.get("region_raw") or "")
+    if notice_price is None:
+        lot = get_rts_ezt_lot_item(db, pn, line_index)
+        if lot:
+            notice_price = lot.get("unit_price")
+    if offer_price is None:
+        for variant in list_drafted_virtual_variants_for_match(db, ktru_code):
+            if int(variant.get("variant_no") or 0) == int(variant_no):
+                offer_price = region_offer_unit_price(variant, oktmo)
+                break
+    return {
+        "notice_unit_price": notice_price,
+        "offer_unit_price": offer_price,
+        "subject_oktmo": oktmo,
+        "region_raw": region_raw,
+    }
+
+
+@app.get("/api/rts/pp/virtual/variant", name="api_rts_pp_virtual_variant")
+def api_rts_pp_virtual_variant(
+    _: Auth,
+    ktru_code: Annotated[str, Query()] = "",
+    variant_no: Annotated[int, Query()] = 0,
+    notification_number: Annotated[str, Query()] = "",
+    line_index: Annotated[int, Query()] = 0,
+) -> dict[str, Any]:
+    code = str(ktru_code or "").strip()
+    pn = str(notification_number or "").strip()
+    no = int(variant_no or 0)
+    if not code or (no < 1 and not pn):
+        raise HTTPException(status_code=400, detail="Укажите ktru_code и variant_no или извещение.")
+    db = _eis_analytics_db_path()
+    row = get_virtual_pp_variant(db, code, no) if no >= 1 else None
+    if no >= 1 and row is None:
+        raise HTTPException(status_code=404, detail="Вариант не найден.")
+    preview = str((row or {}).get("chars_preview") or "")
+    tmpl = resolve_ktru_template(code, cache_dir=cache_dir_from_meta(_META))
+    virtual_chars = display_mapped_characteristics(
+        (row or {}).get("characteristics") if isinstance((row or {}).get("characteristics"), list) else [],
+        tmpl,
+        chars_preview=preview,
+    ) if row else []
+    notice_chars = (
+        load_notice_characteristics(db, notification_number=pn, line_index=line_index, ktru_code=code)
+        if pn
+        else []
+    )
+    chars = compare_virtual_notice_characteristics(virtual_chars, notice_chars)
+    prices = _virtual_variant_compare_prices(
+        db,
+        ktru_code=code,
+        variant_no=no if no >= 1 else 0,
+        notification_number=pn,
+        line_index=int(line_index or 0),
+    )
+    return {
+        "ok": True,
+        "ktru_code": code,
+        "variant_no": (row or {}).get("variant_no"),
+        "in_core": (row or {}).get("in_core"),
+        "chars_preview": preview,
+        "notification_number": pn,
+        "line_index": int(line_index or 0) if pn else None,
+        "can_create": no < 1 and bool(notice_chars),
+        "characteristics": chars,
+        **prices,
+    }
+
+
+@app.post("/api/rts/pp/virtual/from-notice", name="api_rts_pp_virtual_from_notice")
+async def api_rts_pp_virtual_from_notice(request: Request, _: Auth) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    profile = _require_operator_rts_profile(request)
+    created_by = str(request.session.get(SESSION_USER_KEY) or "").strip()
+    try:
+        idx = int(body.get("line_index") or 0)
+    except (TypeError, ValueError):
+        idx = 0
+    try:
+        return draft_virtual_from_notice(
+            _eis_analytics_db_path(),
+            _META,
+            ktru_code=str(body.get("ktru_code") or ""),
+            notification_number=str(body.get("notification_number") or ""),
+            line_index=idx,
+            rts_profile=profile,
+            created_by=created_by,
+        )
+    except VirtualQueueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/rts/pp/virtual/unknown-regions", name="api_rts_pp_virtual_unknown_regions")
+def api_rts_pp_virtual_unknown_regions(_: Auth) -> dict[str, Any]:
+    return {"ok": True, "regions": list_unknown_regions(_eis_analytics_db_path())}
 
 
 @app.get("/preoffers", name="page_preoffers")
@@ -4693,7 +6159,7 @@ def action_eis_rss_cron_start(
     request: Request,
     _: Auth,
     rss_url: Annotated[str, Form()] = DEFAULT_RSS_URL,
-    rss_interval_sec: Annotated[int, Form()] = 30,
+    rss_interval_sec: Annotated[int, Form()] = 20,
     rss_query_label: Annotated[str, Form()] = DEFAULT_QUERY_LABEL,
 ) -> RedirectResponse:
     url = request.url_for("page_analytics")
@@ -4702,7 +6168,7 @@ def action_eis_rss_cron_start(
         request.session["rss_flash_err"] = "ЕИС RSS: укажите корректный RSS URL."
         return RedirectResponse(f"{url}#eis-rss-cron", status_code=303)
     _eis_rss_cron.rss_url = clean_url
-    _eis_rss_cron.interval_sec = max(30, min(int(rss_interval_sec), 3600))
+    _eis_rss_cron.interval_sec = max(20, min(int(rss_interval_sec), 3600))
     _eis_rss_cron.query_label = (rss_query_label or DEFAULT_QUERY_LABEL).strip() or DEFAULT_QUERY_LABEL
     _eis_rss_cron.enabled = True
     _save_eis_rss_settings()
@@ -4807,7 +6273,7 @@ def action_eis_notice_html_fetch(
     try:
         lines_count, chars_count = _fetch_and_store_notice_html(pn, url_s, timeout=30.0)
         try:
-            _run_auto_participate_after_html()
+            _maybe_auto_participate_for_notice(pn)
         except Exception:
             _LOG_WEB.exception("Auto participate after manual HTML fetch")
         try:
@@ -4888,6 +6354,68 @@ async def api_rts_cookie_save(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except OSError as exc:
         raise HTTPException(status_code=500, detail=f"Не удалось записать cookie: {exc}") from exc
+
+
+def _require_cookie_ingest_key(request: Request) -> None:
+    if not cookie_ingest_enabled():
+        raise HTTPException(
+            status_code=503,
+            detail="Приём от расширения отключён: задайте RTS_COOKIE_INGEST_KEY на сервере.",
+        )
+    api_key = (request.headers.get("api-key") or "").strip()
+    if not validate_ingest_api_key(api_key):
+        raise HTTPException(status_code=403, detail="Неверный api-key.")
+
+
+@app.get("/api/rts/cookie/virtual-poll-plan", name="api_rts_cookie_virtual_poll_plan")
+def api_rts_cookie_virtual_poll_plan(request: Request) -> dict[str, Any]:
+    """План опроса ЭЗТ для Cookie Bridge (браузер проходит Anti-DDoS ЛК)."""
+    _require_cookie_ingest_key(request)
+    db = _eis_analytics_db_path()
+    codes = list(dict.fromkeys(list_virtual_pp_ktru_codes(db) + list_pp_core_ktru_codes(db)))
+    return {
+        "ok": True,
+        "ktru_codes": codes,
+        "days": 7,
+        "publication_from": publication_from_iso(days=7),
+        "origins": [
+            "https://app.rts-tender.ru",
+            "https://app-gost.rts-tender.ru",
+        ],
+    }
+
+
+@app.post("/api/rts/cookie/virtual-ingest", name="api_rts_cookie_virtual_ingest")
+async def api_rts_cookie_virtual_ingest(request: Request) -> dict[str, Any]:
+    """Приём auction/search + procedure/lot-items от Cookie Bridge."""
+    _require_cookie_ingest_key(request)
+    try:
+        body = await request.json()
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Ожидается JSON.") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Ожидается JSON-объект.")
+    try:
+        validate_rts_profile(str(body.get("profile") or ""))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    code = str(body.get("ktru_code") or "").strip()
+    search_payload = body.get("search")
+    if not code or not isinstance(search_payload, dict):
+        raise HTTPException(status_code=400, detail="Нужны ktru_code и search.")
+    procedures = body.get("procedures") if isinstance(body.get("procedures"), dict) else {}
+    lot_items = body.get("lot_items") if isinstance(body.get("lot_items"), dict) else {}
+    try:
+        return ingest_ezt_lk_dump(
+            _eis_analytics_db_path(),
+            ktru_code=code,
+            search_payload=search_payload,
+            procedures=procedures,
+            lot_items=lot_items,
+            cache_dir=cache_dir_from_meta(_META),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/api/rts/cookie/status", name="api_rts_cookie_status")
@@ -5010,6 +6538,70 @@ def api_eis_rss_compare_rows(_: Auth) -> dict[str, Any]:
         "rows": rss_vs_getdocs_recent(_eis_analytics_db_path(), limit=30),
         "last_run": last_rss_poll_run(_eis_analytics_db_path()),
         "status": _eis_rss_cron_status_payload(),
+    }
+
+
+@app.get("/api/offer-matching/rows", name="api_offer_matching_rows")
+def api_offer_matching_rows(
+    _: Auth,
+    page: Annotated[int, Query()] = 1,
+    ktru: Annotated[str | None, Query()] = None,
+    catalog: Annotated[str | None, Query()] = None,
+    etp: Annotated[str | None, Query()] = None,
+    date: Annotated[str | None, Query()] = None,
+) -> dict[str, Any]:
+    """Lightweight fingerprint of offer-matching list for 20s UI refresh."""
+    ktru_query = (ktru or "").strip()
+    ktru_queries = _parse_ktru_queries(ktru_query) or None
+    catalog_only = _parse_catalog_only_param(catalog, default=True)
+    etp_query = (etp or "").strip()
+    catalog_ktru_codes = _catalog_ktru_codes() if catalog_only else None
+    pub_from_utc = None
+    pub_to_utc = None
+    day_raw = (date or "").strip()
+    if day_raw:
+        try:
+            day = date.fromisoformat(day_raw)
+            pub_from_utc, pub_to_utc = msk_day_bounds_utc(day)
+        except ValueError:
+            day_raw = ""
+    per_page = 30
+    page_num = max(1, int(page or 1))
+    total_rows = offer_matching_ktru_count(
+        _eis_analytics_db_path(),
+        ktru_query=ktru_query or None,
+        ktru_queries=ktru_queries,
+        catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_query or None,
+        pub_from_utc=pub_from_utc,
+        pub_to_utc=pub_to_utc,
+    )
+    offset = (page_num - 1) * per_page
+    lines = offer_matching_ktru_rows(
+        _eis_analytics_db_path(),
+        limit=per_page,
+        offset=offset,
+        ktru_query=ktru_query or None,
+        ktru_queries=ktru_queries,
+        catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_query or None,
+        pub_from_utc=pub_from_utc,
+        pub_to_utc=pub_to_utc,
+    )
+    keys = [str(r.get("line_key") or "") for r in lines]
+    digest = hashlib.sha1(
+        (f"{total_rows}|{page_num}|" + "|".join(keys)).encode("utf-8")
+    ).hexdigest()
+    return {
+        "ok": True,
+        "fingerprint": digest,
+        "total_rows": int(total_rows),
+        "page": page_num,
+        "line_keys": keys,
+        "generated_at_utc": datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
     }
 
 
@@ -5269,6 +6861,51 @@ def _raise_publish_result(result: Any) -> dict[str, Any]:
     if not result.ok and result.http_status >= 400:
         raise HTTPException(status_code=result.http_status, detail=result.error or result.reason or "error")
     return result.as_api_dict()
+
+
+@app.get("/api/rts/pp/publish/pending-signatures", name="api_rts_pp_publish_pending_signatures")
+def api_rts_pp_publish_pending_signatures(request: Request, _: Auth) -> dict[str, Any]:
+    """Jobs awaiting CryptoPro signature (auto_monitor + auto_participate notice + manual)."""
+    if not _pp_publish_enabled():
+        return {"ok": True, "enabled": False, "jobs": []}
+    try:
+        profile = _require_operator_rts_profile(request)
+    except HTTPException:
+        return {"ok": True, "enabled": True, "jobs": []}
+    # Prefer background auto sources first, then any other awaiting jobs for the profile.
+    jobs: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for source in ("auto_monitor", "notice", ""):
+        if len(jobs) >= 10:
+            break
+        batch = list_pp_publish_jobs(
+            _eis_analytics_db_path(),
+            status="awaiting_signature",
+            rts_profile=profile,
+            source=source,
+            limit=10,
+        )
+        for j in batch:
+            jid = j.get("id")
+            if jid is None or int(jid) in seen:
+                continue
+            jobs.append(j)
+            seen.add(int(jid))
+            if len(jobs) >= 10:
+                break
+    out = []
+    for j in jobs:
+        out.append(
+            {
+                "job_id": j.get("id"),
+                "rts_draft_id": j.get("rts_draft_id"),
+                "source": j.get("source") or "",
+                "source_key": j.get("source_key") or "",
+                "status": j.get("status") or "",
+                "sign_requests": j.get("sign_requests") if isinstance(j.get("sign_requests"), list) else [],
+            }
+        )
+    return {"ok": True, "enabled": True, "jobs": out}
 
 
 @app.post("/api/rts/pp/publish/start", name="api_rts_pp_publish_start")

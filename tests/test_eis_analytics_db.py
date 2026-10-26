@@ -17,6 +17,7 @@ from eis_analytics_db import (
     offer_watch_candidates,
     record_notice_html_page,
     record_offer_watch_notification,
+    record_rss_ktru_hints,
     record_rss_poll_run,
     record_eis_poll_run,
     reparse_notice_html_ktru_lines,
@@ -885,6 +886,74 @@ def test_notice_html_fetch_candidates_excludes_loaded_and_optionally_retries_err
 
     assert [r["purchase_number"] for r in rows] == ["PN_NEEDS_HTML"]
     assert {r["purchase_number"] for r in rows_with_retry} == {"PN_NEEDS_HTML", "PN_ERROR"}
+
+
+def test_notice_html_fetch_candidates_min_price_filter(tmp_path):
+    db = tmp_path / "eis_analytics.sqlite3"
+    record_rss_poll_run(
+        db,
+        [
+            {
+                "reg_number": "PN_LOW",
+                "link": "https://example.test/low",
+                "price_text": "100000,00",
+                "pub_date_utc": "2026-09-20T10:00:00Z",
+            },
+            {
+                "reg_number": "PN_HIGH",
+                "link": "https://example.test/high",
+                "price_text": "250000.50",
+                "pub_date_utc": "2026-09-20T11:00:00Z",
+            },
+            {
+                "reg_number": "PN_EMPTY",
+                "link": "https://example.test/empty",
+                "price_text": "",
+                "pub_date_utc": "2026-09-20T12:00:00Z",
+            },
+        ],
+        query_label="test",
+        rss_url="https://example.test/rss",
+        started_at_utc=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
+        finished_at_utc=datetime(2026, 9, 20, 12, 0, tzinfo=timezone.utc),
+        ok=True,
+        errors=[],
+    )
+    all_rows = notice_html_fetch_candidates(db, limit=10)
+    assert {r["purchase_number"] for r in all_rows} == {"PN_LOW", "PN_HIGH", "PN_EMPTY"}
+    filtered = notice_html_fetch_candidates(db, limit=10, min_price=150000)
+    assert [r["purchase_number"] for r in filtered] == ["PN_HIGH"]
+
+
+def test_notice_html_fetch_candidates_catalog_ktru_ignores_price(tmp_path):
+    db = tmp_path / "eis_analytics.sqlite3"
+    record_rss_poll_run(
+        db,
+        [
+            {
+                "reg_number": "PN_CAT",
+                "link": "https://example.test/cat",
+                "price_text": "12000,00",
+                "pub_date_utc": "2026-10-08T10:00:00Z",
+            },
+            {
+                "reg_number": "PN_OTHER",
+                "link": "https://example.test/other",
+                "price_text": "900000,00",
+                "pub_date_utc": "2026-10-08T11:00:00Z",
+            },
+        ],
+        query_label="test",
+        rss_url="https://example.test/rss",
+        started_at_utc=datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc),
+        finished_at_utc=datetime(2026, 10, 8, 12, 0, tzinfo=timezone.utc),
+        ok=True,
+        errors=[],
+    )
+    record_rss_ktru_hints(db, ["PN_CAT"], "K1")
+    rows = notice_html_fetch_candidates(db, limit=10, catalog_ktru_codes=["K1"], min_price=150000)
+    assert [r["purchase_number"] for r in rows] == ["PN_CAT"]
+    assert notice_html_fetch_candidates(db, limit=10, catalog_ktru_codes=[]) == []
 
 
 def test_enrich_notice_characteristics_overlays_xml_codes(tmp_path):

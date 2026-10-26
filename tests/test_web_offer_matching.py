@@ -6,7 +6,7 @@ from pathlib import Path
 import participation_price as pp
 from fastapi.testclient import TestClient
 
-from eis_analytics_db import record_notice_html_page, record_rss_poll_run
+from eis_analytics_db import record_notice_html_page, record_rss_ktru_hints, record_rss_poll_run
 from eis_notice_html_parse import parse_notice_common_info_html
 from rts_ktru_cache import save_cached_template
 from rts_preoffers import upsert_preoffer
@@ -107,7 +107,9 @@ def test_offer_matching_page_and_menu(monkeypatch, tmp_path):
     assert "Подбор предложений" in r.text
     assert 'value="1" selected' in r.text
     assert "Участвовать" in r.text
-    assert "Создание черновика ПП на РТС" in r.text
+    assert "offer-row-publish" in r.text
+    assert "Создать и опубликовать ПП" in r.text
+    assert "Создание и публикация ПП через РТС" in r.text
     assert 'id="offer-catalog-filter"' in r.text
     assert "0117300004426000001" in r.text
     assert "offer-profitability" in r.text
@@ -228,6 +230,7 @@ def test_offer_matching_page_starts_from_rss_rows_without_html(monkeypatch, tmp_
     assert "0117300004426000099" in r.text
     assert "н/д" in r.text
     assert "карточка ЕИС не загружена" in r.text
+    assert "Загрузить карточку" in r.text
     assert api.json()["status"] == "not_loaded"
 
 
@@ -320,7 +323,7 @@ def test_offer_matching_page_filters_by_catalog(monkeypatch, tmp_path):
     assert "По КТРУ «21.20» ничего не найдено." in empty_catalog.text
 
 
-def test_offer_matching_api_participate_requires_catalog_and_pp_template(monkeypatch, tmp_path):
+def test_offer_matching_api_participate_requires_catalog_not_pp_template(monkeypatch, tmp_path):
     db = tmp_path / "eis_analytics.sqlite3"
     preoffers = tmp_path / "rts_preoffers.json"
     cache = tmp_path / "ktru_rts_cache"
@@ -336,13 +339,15 @@ def test_offer_matching_api_participate_requires_catalog_and_pp_template(monkeyp
     assert "справочнике предложений" in no_catalog["participate_reason"]
 
     _seed_matching_preoffer(preoffers)
-    no_template = client.get("/api/offer-matching/0117300004426000001").json()["positions"][0]
-    assert no_template["can_participate"] is False
-    assert "draft_ktru_dict" in no_template["participate_reason"]
+    # Local draft_ktru_dict is optional for RTS notice path (creation-data is source of truth).
+    ready_without_template = client.get("/api/offer-matching/0117300004426000001").json()["positions"][0]
+    assert ready_without_template["can_participate"] is True
+    assert ready_without_template["in_pp_template"] is False
 
     _seed_ktru_cache(cache)
     ready = client.get("/api/offer-matching/0117300004426000001").json()["positions"][0]
     assert ready["can_participate"] is True
+    assert ready["in_pp_template"] is True
 
 
 def test_offer_matching_participate_without_preoffer_catalog_when_env_disabled(monkeypatch, tmp_path):
@@ -350,7 +355,6 @@ def test_offer_matching_participate_without_preoffer_catalog_when_env_disabled(m
     preoffers = tmp_path / "rts_preoffers.json"
     cache = tmp_path / "ktru_rts_cache"
     _seed_loaded_notice(db)
-    _seed_ktru_cache(cache)
     monkeypatch.setenv("RTS_PP_PARTICIPATE_REQUIRE_PREOFFER_CATALOG", "0")
     monkeypatch.setattr(web_main, "_META", tmp_path)
     monkeypatch.setattr(web_main, "_KTRU_CACHE", cache)
@@ -361,7 +365,7 @@ def test_offer_matching_participate_without_preoffer_catalog_when_env_disabled(m
     row = client.get("/api/offer-matching/0117300004426000001").json()["positions"][0]
     assert row["can_participate"] is True
     assert row["in_preoffer_catalog"] is False
-
+    assert row["in_pp_template"] is False
 
 def test_offer_matching_hides_profitability_when_price_ord_disabled(monkeypatch, tmp_path):
     db = tmp_path / "eis_analytics.sqlite3"
@@ -380,3 +384,83 @@ def test_offer_matching_hides_profitability_when_price_ord_disabled(monkeypatch,
     row = client.get("/api/offer-matching/0117300004426000001").json()["positions"][0]
     assert row["participation_economics"]["error_reason"] == "disabled"
     assert row["participation_economics"]["profitability_text"] == "н/д"
+
+
+def test_offer_matching_catalog_shows_hint_without_html_any_price(monkeypatch, tmp_path):
+    db = tmp_path / "eis_analytics.sqlite3"
+    preoffers = tmp_path / "rts_preoffers.json"
+    _seed_matching_preoffer(preoffers)
+    record_rss_poll_run(
+        db,
+        [
+            {
+                "reg_number": "0342300012026000185",
+                "link": "https://zakupki.gov.ru/epz/order/notice/ezt20/view/common-info.html?regNumber=0342300012026000185",
+                "pub_date_utc": "2026-10-08T08:03:00Z",
+                "customer_name": "Мелкая закупка",
+                "price_text": "12000,00",
+            },
+            {
+                "reg_number": "PN-NOT-CATALOG",
+                "link": "https://example.test/other",
+                "pub_date_utc": "2026-10-08T08:04:00Z",
+                "customer_name": "Чужой КТРУ",
+                "price_text": "900000,00",
+            },
+        ],
+        query_label="t",
+        rss_url="https://example.test/rss",
+        started_at_utc=datetime(2026, 10, 8, 8, 5, tzinfo=timezone.utc),
+        finished_at_utc=datetime(2026, 10, 8, 8, 5, tzinfo=timezone.utc),
+        ok=True,
+        errors=[],
+    )
+    record_rss_ktru_hints(db, ["0342300012026000185"], KTRU)
+    monkeypatch.setattr(web_main, "_META", tmp_path)
+    monkeypatch.setattr(web_main, "_eis_analytics_db_path", lambda: db)
+    monkeypatch.setattr(web_main, "_rts_preoffers_path", lambda: preoffers)
+    client = TestClient(web_main.app)
+
+    r = client.get("/offer-matching")
+    assert r.status_code == 200
+    assert "0342300012026000185" in r.text
+    assert "Загрузить карточку" in r.text
+    assert "PN-NOT-CATALOG" not in r.text
+    assert "12000,00" in r.text
+    assert "Щебень гранитный М1200 F50 И4 20-40" in r.text
+
+
+def test_offer_matching_etp_filter_keeps_load_card_for_rss_rows(monkeypatch, tmp_path):
+    db = tmp_path / "eis_analytics.sqlite3"
+    preoffers = tmp_path / "rts_preoffers.json"
+    _seed_matching_preoffer(preoffers)
+    record_rss_poll_run(
+        db,
+        [
+            {
+                "reg_number": "0342300012026000185",
+                "link": "https://zakupki.gov.ru/epz/order/notice/ezt20/view/common-info.html?regNumber=0342300012026000185",
+                "pub_date_utc": "2026-10-08T08:03:00Z",
+                "customer_name": "Мелкая закупка",
+                "price_text": "12000,00",
+            }
+        ],
+        query_label="t",
+        rss_url="https://zakupki.gov.ru/epz/order/extendedsearch/rss.html?etp=7360768&etp_7360768=on",
+        started_at_utc=datetime(2026, 10, 8, 8, 5, tzinfo=timezone.utc),
+        finished_at_utc=datetime(2026, 10, 8, 8, 5, tzinfo=timezone.utc),
+        ok=True,
+        errors=[],
+    )
+    record_rss_ktru_hints(db, ["0342300012026000185"], KTRU)
+    monkeypatch.setattr(web_main, "_META", tmp_path)
+    monkeypatch.setattr(web_main, "_eis_analytics_db_path", lambda: db)
+    monkeypatch.setattr(web_main, "_rts_preoffers_path", lambda: preoffers)
+    client = TestClient(web_main.app)
+
+    r = client.get("/offer-matching", params={"etp": "РТС-тендер"})
+    assert r.status_code == 200
+    assert "0342300012026000185" in r.text
+    assert "РТС-тендер" in r.text
+    assert "Загрузить карточку" in r.text
+    assert "Щебень гранитный М1200 F50 И4 20-40" in r.text

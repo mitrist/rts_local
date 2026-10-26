@@ -1,0 +1,794 @@
+[
+  {
+    "code": "01000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Алтайского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T00:59:05.23",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "02000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Федеральная территория \"Сириус\"",
+    "actual": true,
+    "lastUpdateDate": "2026-08-17T18:46:38.311",
+    "category": "Undefined"
+  },
+  {
+    "code": "03000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Краснодарского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T00:52:08.798",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "04000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Красноярского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T00:58:08.337",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "05000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Приморского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:03:17.433",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "07000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Ставропольского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:21:11.479",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "08000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Хабаровского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:30:26.933",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "10000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Амурской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:09:13.146",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "11000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Архангельской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:22:11.597",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "12000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Астраханской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:33:09.537",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "14000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Белгородской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:43:26.522",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "15000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Брянской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:31:49.639",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "17000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Владимирской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:36:58.203",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "18000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Волгоградской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T01:47:52.242",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "19000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Вологодской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T02:03:33.195",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "20000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Воронежской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T02:23:55.817",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "21000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Донецкой Народной Республики",
+    "actual": true,
+    "lastUpdateDate": "2025-10-16T15:35:43.008",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "22000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Нижегородской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T02:21:15.068",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "23000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Запорожской области",
+    "actual": true,
+    "lastUpdateDate": "2026-01-29T16:19:31.387",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "24000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Ивановской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-03T02:35:22.728",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "25000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Иркутской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:47:29.511",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "26000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Ингушетии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:53:38.506",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "27000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Калининградской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:55:26.781",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "28000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Тверской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:51:57.919",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "29000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Калужской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T23:32:33.328",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "30000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Камчатского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T23:47:46.978",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "32000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Кемеровской области - Кузбасса",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T23:47:43.497",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "33000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Кировской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T23:21:29.735",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "34000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Костромской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:50:40.607",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "35000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Крым",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:53:42.053",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "36000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Самарской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:54:12.34",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "37000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Курганской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:14:53.842",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "38000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Курской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:17:02.844",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "40000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования города федерального значения Санкт-Петербурга",
+    "actual": true,
+    "lastUpdateDate": "2026-08-17T18:46:38.56",
+    "category": "Undefined"
+  },
+  {
+    "code": "41000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Ленинградской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:25:14.361",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "42000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Липецкой области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:28:50.993",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "43000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Луганской Народной Республики",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T23:53:13.696",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "44000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Магаданской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:28:04.903",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "45000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования города Москвы (столицы Российской Федерации города федерального значения)",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:30:38.186",
+    "category": "Undefined"
+  },
+  {
+    "code": "46000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Московской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:31:35.147",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "47000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Мурманской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:32:25.656",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "49000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Новгородской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:32:00.246",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "50000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Новосибирской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:37:36.189",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "52000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Омской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:38:35.949",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "53000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Оренбургской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:43:49.599",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "54000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Орловской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:44:21.128",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "55000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Байконур",
+    "actual": true,
+    "lastUpdateDate": "2026-09-10T12:00:00",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "56000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Пензенской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:57:49.832",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "57000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Пермского края",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:53:48.895",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "58000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Псковской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:57:14.242",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "60000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Ростовской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:45:12.364",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "61000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Рязанской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:56:01.39",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "63000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Саратовской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:59:58.304",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "64000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Сахалинской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-29T11:34:47.209",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "65000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Свердловской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:04:18.607",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "66000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Смоленской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:10:12.891",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "67000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования города федерального значения Севастополя",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:07:29.191",
+    "category": "Undefined"
+  },
+  {
+    "code": "68000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Тамбовской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:08:55.823",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "69000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Томской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:08:02.687",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "70000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Тульской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:10:25.04",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "71000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Тюменской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:15:26.261",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "73000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Ульяновской области",
+    "actual": true,
+    "lastUpdateDate": "2025-08-05T11:20:37.53",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "74000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Херсонской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T23:46:51.655",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "75000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Челябинской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:21:09.114",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "76000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Забайкальского края",
+    "actual": true,
+    "lastUpdateDate": "2025-08-06T11:17:06.584",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "77000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Чукотского автономного округа",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:22:06.483",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "78000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Ярославской области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:21:43.982",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "79000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Адыгеи (Адыгеи)",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:31:10.681",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "80000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Башкортостан",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:32:58.575",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "81000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Бурятии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T21:42:26.394",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "82000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Дагестан",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:51:11.469",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "83000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Кабардино-Балкарской Республики",
+    "actual": true,
+    "lastUpdateDate": "2025-08-04T14:13:35.301",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "84000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Алтай",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:52:16.339",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "85000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Калмыкии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:55:28.904",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "86000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Карелии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:53:55.544",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "87000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Коми",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:57:57.524",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "88000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Марий Эл",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:55:59.385",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "89000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Мордовии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T19:59:17.731",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "90000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Северная Осетия-Алания",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:04:58.665",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "91000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Карачаево-Черкесской Республики",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:02:48.527",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "92000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Татарстан (Татарстана)",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:04:51.973",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "93000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Тывы",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:15:40.835",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "94000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Удмуртской Республики",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:16:26.243",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "95000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Хакасии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:12:09.067",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "96000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Чеченской Республики",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:11:59.869",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "97000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Чувашской Республики - Чувашии",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:15:30.87",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "98000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Республики Саха (Якутия)",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:16:53.204",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  },
+  {
+    "code": "99000000",
+    "parentCode": null,
+    "section": "1",
+    "fullName": "Муниципальные образования Еврейской автономной области",
+    "actual": true,
+    "lastUpdateDate": "2025-04-02T20:13:28.867",
+    "category": "MunicipalEntitiesOfSubjectsRf"
+  }
+]

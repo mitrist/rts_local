@@ -1,0 +1,341 @@
+{
+  "_cache_meta": {
+    "cached_at_unix": 1791198702,
+    "ktru_code": "31.01.11.150-00000021",
+    "version": 4
+  },
+  "item": {
+    "id": 181712,
+    "code": "31.01.11.150-00000021",
+    "version": 4,
+    "inclusionDate": "2020-10-26T15:49:46",
+    "publishDate": "2026-09-14T09:14:33",
+    "name": "Стул ученический",
+    "actual": true,
+    "applicationDateStart": "2026-10-13T21:00:00",
+    "applicationDateEnd": null,
+    "signatureFileGuid": null,
+    "cancelDate": null,
+    "cancelReason": null,
+    "description": null,
+    "isTemplate": false,
+    "externalCode": null,
+    "parentCode": "31.01.11.150-00000007",
+    "parentVersion": 6,
+    "parentExternalCode": null,
+    "versionStatus": "ACTIVE",
+    "versionCode": null,
+    "updateDate": "2026-09-14T09:14:34",
+    "okpd2": {
+      "code": "31.01.11.150",
+      "parentCode": "31.01.11",
+      "name": "Мебель для сидения, преимущественно с металлическим каркасом",
+      "comment": null,
+      "actual": true,
+      "hasChildren": true
+    },
+    "industryClassifier": null,
+    "okeis": [
+      {
+        "code": "796",
+        "fullName": "Штука",
+        "section": "1",
+        "oosGroup": 7,
+        "localName": "ШТ",
+        "internationalName": "PCE; NMB",
+        "localSymbol": "шт",
+        "internationalSymbol": "pc; 1",
+        "actual": true,
+        "isTemporaryForKtru": false
+      }
+    ],
+    "attachments": [],
+    "characteristics": [
+      {
+        "id": 923967,
+        "code": "afc5bf77-c",
+        "name": "Регулировка по высоте",
+        "isActual": true,
+        "isRequired": true,
+        "characteristicType": {
+          "id": 1,
+          "name": "Качественная"
+        },
+        "characteristicKind": {
+          "id": 1,
+          "name": "Неизменяемая заказчиком"
+        },
+        "characteristicChoiceType": {
+          "id": 1,
+          "name": "Единственный выбор"
+        },
+        "characteristicValues": [
+          {
+            "id": 5542871,
+            "qualityDescription": "Да",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923967,
+            "characteristicCode": "afc5bf77-c",
+            "characteristicName": "Регулировка по высоте",
+            "valueCode": "3458c856-1"
+          }
+        ]
+      },
+      {
+        "id": 923968,
+        "code": "1ee0bf77-3",
+        "name": "Ростовая группа",
+        "isActual": true,
+        "isRequired": true,
+        "characteristicType": {
+          "id": 1,
+          "name": "Качественная"
+        },
+        "characteristicKind": {
+          "id": 3,
+          "name": "Изменяемая заказчиком, выбор нескольких значений"
+        },
+        "characteristicChoiceType": {
+          "id": 2,
+          "name": "Множественный выбор"
+        },
+        "characteristicValues": [
+          {
+            "id": 5542872,
+            "qualityDescription": "1",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "acea44cd-8"
+          },
+          {
+            "id": 5542873,
+            "qualityDescription": "2",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "b05215bd-5"
+          },
+          {
+            "id": 5542874,
+            "qualityDescription": "3",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "aed887b0-2"
+          },
+          {
+            "id": 5542875,
+            "qualityDescription": "4",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "9548848f-d"
+          },
+          {
+            "id": 5542876,
+            "qualityDescription": "5",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "0f45839c-e"
+          },
+          {
+            "id": 5542877,
+            "qualityDescription": "6",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "f82a9ac4-0"
+          },
+          {
+            "id": 5542878,
+            "qualityDescription": "7",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923968,
+            "characteristicCode": "1ee0bf77-3",
+            "characteristicName": "Ростовая группа",
+            "valueCode": "897c058a-2"
+          }
+        ]
+      },
+      {
+        "id": 923969,
+        "code": "ea8d80e2-0",
+        "name": "Тип каркаса",
+        "isActual": true,
+        "isRequired": true,
+        "characteristicType": {
+          "id": 1,
+          "name": "Качественная"
+        },
+        "characteristicKind": {
+          "id": 1,
+          "name": "Неизменяемая заказчиком"
+        },
+        "characteristicChoiceType": {
+          "id": 1,
+          "name": "Единственный выбор"
+        },
+        "characteristicValues": [
+          {
+            "id": 5542879,
+            "qualityDescription": "Металлический",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923969,
+            "characteristicCode": "ea8d80e2-0",
+            "characteristicName": "Тип каркаса",
+            "valueCode": "1444590c-1"
+          }
+        ]
+      },
+      {
+        "id": 923970,
+        "code": "1f5fa9d7-5",
+        "name": "Вид материала спинки/сиденья",
+        "isActual": true,
+        "isRequired": false,
+        "characteristicType": {
+          "id": 1,
+          "name": "Качественная"
+        },
+        "characteristicKind": {
+          "id": 2,
+          "name": "Изменемая заказчиком с выбором одного значения"
+        },
+        "characteristicChoiceType": {
+          "id": 2,
+          "name": "Множественный выбор"
+        },
+        "characteristicValues": [
+          {
+            "id": 5542880,
+            "qualityDescription": "Массив дерева",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923970,
+            "characteristicCode": "1f5fa9d7-5",
+            "characteristicName": "Вид материала спинки/сиденья",
+            "valueCode": "1b9e3be5-e"
+          },
+          {
+            "id": 5542881,
+            "qualityDescription": "Фанера",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923970,
+            "characteristicCode": "1f5fa9d7-5",
+            "characteristicName": "Вид материала спинки/сиденья",
+            "valueCode": "7432f784-1"
+          },
+          {
+            "id": 5542882,
+            "qualityDescription": "Пластик",
+            "okei": null,
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "productCharacteristic": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "format": null,
+            "characteristicId": 923970,
+            "characteristicCode": "1f5fa9d7-5",
+            "characteristicName": "Вид материала спинки/сиденья",
+            "valueCode": "393996d7-d"
+          }
+        ]
+      }
+    ],
+    "classifiers": [],
+    "products": [],
+    "standarts": [],
+    "rubricators": [
+      {
+        "code": "128",
+        "name": "Мебель"
+      }
+    ]
+  }
+}

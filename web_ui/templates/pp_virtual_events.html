@@ -1,0 +1,426 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Журнал сопоставления</h2>
+<p class="hint">
+  Позиции монитора ЕИС против виртуального набора.
+  Индекс варианта — тот же №, что в ядре КТРУ.
+  <a href="{{ request.url_for('page_pp_virtual') }}">Виртуальные ПП</a>
+  ·
+  <a href="{{ request.url_for('page_pp_core') }}">Ядро КТРУ</a>
+</p>
+
+<div id="pp-virtual-ev-flash" class="msg err" hidden></div>
+
+<section class="card">
+  <h3>Фильтры</h3>
+  <div class="pp-create-actions">
+    <label>
+      КТРУ
+      <select id="pp-virtual-ev-ktru">
+        <option value="">все</option>
+        {% for item in ktru_options %}
+        <option value="{{ item.code }}" {% if item.code == default_ktru %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      Совпало
+      <select id="pp-virtual-ev-matched">
+        <option value="all">все</option>
+        <option value="yes">да</option>
+        <option value="no">нет</option>
+      </select>
+    </label>
+  </div>
+  <div class="pp-create-actions">
+    <button type="button" class="button secondary pp-virtual-ev-days" data-days="7">7 дней</button>
+    <button type="button" class="button secondary pp-virtual-ev-days" data-days="30">30 дней</button>
+  </div>
+  <p class="hint" id="pp-virtual-ev-meta"></p>
+</section>
+
+<section class="card">
+  <div class="pp-virtual-ev-table-wrap">
+    <table class="eis-table" id="pp-virtual-ev-table">
+      <thead>
+        <tr>
+          <th>Дата</th>
+          <th>Извещение</th>
+          <th>Регион</th>
+          <th>КТРУ</th>
+          <th>Наименование</th>
+          <th>Совпало?</th>
+          <th>Вариант</th>
+          <th>Количество</th>
+          <th>Цена за ед.</th>
+          <th>Наша цена</th>
+          <th>Цена победителя</th>
+          <th>Сумма</th>
+        </tr>
+      </thead>
+      <tbody id="pp-virtual-ev-body">
+        <tr><td colspan="12" class="hint">Нет событий.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div id="pp-virtual-variant-modal" class="eis-modal" hidden aria-hidden="true">
+  <div class="eis-modal-backdrop" data-variant-modal-close tabindex="-1"></div>
+  <div class="eis-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="pp-virtual-variant-heading">
+    <div class="eis-modal-toolbar">
+      <button type="button" class="eis-modal-close" data-variant-modal-close aria-label="Закрыть">×</button>
+    </div>
+    <h4 id="pp-virtual-variant-heading" class="eis-modal-heading">Вариант ядра</h4>
+    <p id="pp-virtual-variant-title" class="eis-modal-position"></p>
+    <dl class="eis-modal-meta" id="pp-virtual-variant-prices">
+      <div>
+        <dt>Цена виртуального ПП</dt>
+        <dd id="pp-virtual-variant-offer-price">—</dd>
+      </div>
+      <div>
+        <dt>Цена извещения</dt>
+        <dd id="pp-virtual-variant-notice-price">—</dd>
+      </div>
+    </dl>
+    <div class="eis-modal-table-wrap" id="pp-virtual-variant-table-wrap">
+      <table class="eis-table eis-cmp-table" id="pp-virtual-variant-chars">
+        <thead>
+          <tr>
+            <th>Параметр</th>
+            <th>Виртуальное ПП</th>
+            <th>Извещение</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+    <p id="pp-virtual-variant-empty" class="hint" hidden>Характеристики не заданы.</p>
+    <p id="pp-virtual-variant-create-wrap" hidden>
+      <button type="button" class="button" id="pp-virtual-variant-create">Создать виртуальное ПП</button>
+    </p>
+    <p id="pp-virtual-variant-create-msg" class="hint" hidden></p>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var state = { days: 7 };
+
+  function $(id) { return document.getElementById(id); }
+  function showErr(msg) {
+    var el = $("pp-virtual-ev-flash");
+    el.textContent = msg || "";
+    el.hidden = !msg;
+  }
+  function fmtMoney(v) {
+    if (v == null || v === "") return "—";
+    var n = Number(v);
+    if (!isFinite(n)) return String(v);
+    return n.toLocaleString("ru-RU", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+  }
+  function esc(s) {
+    return String(s || "").replace(/[&<>"]/g, function (ch) {
+      return ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[ch];
+    });
+  }
+
+  function variantCell(row) {
+    var no = row.variant_no;
+    if (no == null) return "—";
+    var label = row.in_core ? ("#" + no) : ("пояс " + no);
+    return '<button type="button" class="link-button pp-virtual-variant-link" data-ktru="' +
+      esc(row.ktru_code) + '" data-variant="' + no +
+      '" data-notice="' + esc(row.notification_number || "") +
+      '" data-line="' + esc(row.line_index == null ? "" : String(row.line_index)) +
+      '">' + label + "</button>";
+  }
+
+  function winnerCell(row) {
+    var val = row.winner_unit_price;
+    var shown = (val == null || val === "") ? "" : String(val);
+    return '<input type="text" class="pp-virtual-ev-winner" inputmode="decimal" autocomplete="off"' +
+      ' placeholder="—" aria-label="Цена победителя"' +
+      ' data-ktru="' + esc(row.ktru_code || "") + '"' +
+      ' data-notice="' + esc(row.notification_number || "") + '"' +
+      ' data-line="' + esc(row.line_index == null ? "" : String(row.line_index)) + '"' +
+      ' value="' + esc(shown) + '">';
+  }
+
+  function matchCell(row) {
+    var label = row.matched ? "да" : "нет";
+    var no = row.matched && row.variant_no ? row.variant_no : 0;
+    var ov = row.char_status_override || "";
+    var link = '<button type="button" class="link-button pp-virtual-variant-link" data-ktru="' +
+      esc(row.ktru_code) + '" data-variant="' + no +
+      '" data-notice="' + esc(row.notification_number || "") +
+      '" data-line="' + esc(row.line_index == null ? "" : String(row.line_index)) +
+      '">' + label + "</button>";
+    var sel = '<select class="pp-virtual-ev-match-ov" title="Статус вручную"' +
+      ' data-ktru="' + esc(row.ktru_code || "") + '"' +
+      ' data-notice="' + esc(row.notification_number || "") + '"' +
+      ' data-line="' + esc(row.line_index == null ? "" : String(row.line_index)) + '">' +
+      '<option value=""' + (ov ? "" : " selected") + ">авто</option>" +
+      '<option value="hit"' + (ov === "hit" ? " selected" : "") + ">да</option>" +
+      '<option value="miss"' + (ov === "miss" ? " selected" : "") + ">нет</option>" +
+      "</select>";
+    return '<span class="pp-virtual-ev-match">' + link + sel + "</span>";
+  }
+
+  function loadEvents() {
+    showErr("");
+    var code = $("pp-virtual-ev-ktru").value.trim();
+    var matched = $("pp-virtual-ev-matched").value;
+    var q = "?days=" + state.days + "&matched=" + encodeURIComponent(matched) + "&limit=500";
+    if (code) q += "&ktru_code=" + encodeURIComponent(code);
+    return fetch("/api/rts/pp/virtual/events" + q, { credentials: "same-origin" })
+      .then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.j && res.j.detail) || "Не удалось загрузить журнал.");
+        var rows = res.j.events || [];
+        $("pp-virtual-ev-meta").textContent = "Строк: " + rows.length + (code ? (" · " + code) : " · все КТРУ");
+        var body = $("pp-virtual-ev-body");
+        body.innerHTML = "";
+        if (!rows.length) {
+          body.innerHTML = '<tr><td colspan="12" class="hint">Нет событий.</td></tr>';
+          return;
+        }
+        rows.forEach(function (row) {
+          var tr = document.createElement("tr");
+          var pn = row.notification_number || "";
+          var notice = pn;
+          if (row.eis_url) {
+            notice = '<a href="' + esc(row.eis_url) + '" target="_blank" rel="noopener">' + esc(pn) + "</a>";
+          }
+          tr.innerHTML =
+            "<td>" + esc(row.publication_date || "") + "</td>" +
+            "<td>" + notice + "</td>" +
+            "<td>" + esc(row.region_raw || "") + "<br><span class=\"hint\">" + esc(row.subject_oktmo || "") + "</span></td>" +
+            "<td>" + esc(row.ktru_code || "") + "</td>" +
+            "<td>" + esc(row.ktru_name || "") + "</td>" +
+            "<td>" + matchCell(row) + "</td>" +
+            "<td>" + variantCell(row) + "</td>" +
+            "<td>" + fmtMoney(row.quantity) + "</td>" +
+            "<td>" + fmtMoney(row.unit_price) + "</td>" +
+            "<td>" + fmtMoney(row.offer_unit_price) + "</td>" +
+            "<td>" + winnerCell(row) + "</td>" +
+            "<td>" + fmtMoney(row.line_sum) + "</td>";
+          body.appendChild(tr);
+        });
+      }).catch(function (e) { showErr(e.message || String(e)); });
+  }
+
+  var modal = $("pp-virtual-variant-modal");
+  var charsBody = $("pp-virtual-variant-chars").querySelector("tbody");
+  var createCtx = { ktru: "", notice: "", line: "" };
+  var pendingCreateMsg = "";
+
+  function closeModal() {
+    modal.hidden = true;
+    modal.setAttribute("aria-hidden", "true");
+  }
+  function openModal() {
+    modal.hidden = false;
+    modal.setAttribute("aria-hidden", "false");
+  }
+
+  function rowClass(rc) {
+    if (rc === "match") return "eis-cmp-tr eis-cmp-match";
+    if (rc === "mismatch") return "eis-cmp-tr eis-cmp-mismatch";
+    return "eis-cmp-tr eis-cmp-neutral";
+  }
+
+  function showVariant(ktru, no, notice, line) {
+    var q = "?ktru_code=" + encodeURIComponent(ktru) + "&variant_no=" + encodeURIComponent(no);
+    if (notice) q += "&notification_number=" + encodeURIComponent(notice);
+    if (line !== "" && line != null) q += "&line_index=" + encodeURIComponent(line);
+    fetch("/api/rts/pp/virtual/variant" + q, {
+      credentials: "same-origin"
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.j && res.j.detail) || "Вариант не найден.");
+        var j = res.j;
+        var canCreate = !!j.can_create;
+        if (canCreate || !j.variant_no) {
+          $("pp-virtual-variant-heading").textContent = "Извещение без совпадения";
+        } else {
+          $("pp-virtual-variant-heading").textContent = "Вариант " + (j.variant_no || no) +
+            (j.in_core ? " ядра" : " пояса");
+        }
+        var title = j.ktru_code || ktru || "";
+        if (j.notification_number) title += " · извещение " + j.notification_number;
+        $("pp-virtual-variant-title").textContent = title;
+        $("pp-virtual-variant-offer-price").textContent = fmtMoney(j.offer_unit_price);
+        $("pp-virtual-variant-notice-price").textContent = fmtMoney(j.notice_unit_price);
+        var offerN = Number(j.offer_unit_price);
+        var noticeN = Number(j.notice_unit_price);
+        var priceBox = $("pp-virtual-variant-prices");
+        priceBox.querySelectorAll("div").forEach(function (el) { el.className = ""; });
+        if (isFinite(offerN) && isFinite(noticeN)) {
+          var priceClass = offerN === noticeN ? "eis-cmp-match" : "eis-cmp-mismatch";
+          priceBox.querySelectorAll("div").forEach(function (el) { el.className = priceClass; });
+        }
+        charsBody.innerHTML = "";
+        var chars = (j.characteristics || []).slice();
+        if (j.offer_unit_price != null || j.notice_unit_price != null) {
+          var priceRowClass = "neutral";
+          if (isFinite(offerN) && isFinite(noticeN)) {
+            priceRowClass = offerN === noticeN ? "match" : "mismatch";
+          }
+          chars.unshift({
+            display_label: "Цена за единицу",
+            virtual_value: fmtMoney(j.offer_unit_price),
+            notice_value: fmtMoney(j.notice_unit_price),
+            row_class: priceRowClass
+          });
+        }
+        $("pp-virtual-variant-empty").hidden = chars.length > 0;
+        $("pp-virtual-variant-table-wrap").hidden = chars.length === 0;
+        chars.forEach(function (ch) {
+          var label = ch.display_label || ch.eis_char || ch.name || "";
+          var virt = ch.virtual_value || ch.value_display || ch.eis_value || "";
+          var noticeVal = ch.notice_value || "";
+          if (!label && !virt && !noticeVal) return;
+          var tr = document.createElement("tr");
+          tr.className = rowClass(ch.row_class);
+          tr.innerHTML = "<td>" + esc(label || "—") + "</td><td>" + esc(virt || "—") +
+            "</td><td>" + esc(noticeVal || "—") + "</td>";
+          charsBody.appendChild(tr);
+        });
+        createCtx = {
+          ktru: j.ktru_code || ktru || "",
+          notice: j.notification_number || notice || "",
+          line: line
+        };
+        $("pp-virtual-variant-create-wrap").hidden = !canCreate;
+        $("pp-virtual-variant-create").disabled = false;
+        if (pendingCreateMsg) {
+          $("pp-virtual-variant-create-msg").hidden = false;
+          $("pp-virtual-variant-create-msg").textContent = pendingCreateMsg;
+          pendingCreateMsg = "";
+        } else {
+          $("pp-virtual-variant-create-msg").hidden = true;
+          $("pp-virtual-variant-create-msg").textContent = "";
+        }
+        openModal();
+      }).catch(function (e) { showErr(e.message || String(e)); });
+  }
+
+  $("pp-virtual-variant-create").addEventListener("click", function () {
+    var btn = $("pp-virtual-variant-create");
+    btn.disabled = true;
+    fetch("/api/rts/pp/virtual/from-notice", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ktru_code: createCtx.ktru,
+        notification_number: createCtx.notice,
+        line_index: createCtx.line === "" || createCtx.line == null ? 0 : Number(createCtx.line)
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.j && res.j.detail) || "Не удалось создать черновик.");
+        pendingCreateMsg = res.j.message || "Черновик создан.";
+        showVariant(
+          createCtx.ktru,
+          res.j.variant_no || 0,
+          createCtx.notice,
+          createCtx.line
+        );
+      }).catch(function (e) {
+        btn.disabled = false;
+        showErr(e.message || String(e));
+      });
+  });
+
+  document.addEventListener("click", function (ev) {
+    var btn = ev.target.closest && ev.target.closest(".pp-virtual-variant-link");
+    if (btn) {
+      ev.preventDefault();
+      showVariant(
+        btn.getAttribute("data-ktru") || "",
+        btn.getAttribute("data-variant") || "",
+        btn.getAttribute("data-notice") || "",
+        btn.getAttribute("data-line") || ""
+      );
+      return;
+    }
+    if (ev.target.closest && ev.target.closest("[data-variant-modal-close]")) {
+      closeModal();
+    }
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key === "Escape" && !modal.hidden) closeModal();
+  });
+
+  function saveWinnerPrice(input) {
+    var notice = input.getAttribute("data-notice") || "";
+    var ktru = input.getAttribute("data-ktru") || "";
+    var line = input.getAttribute("data-line") || "";
+    fetch("/api/rts/pp/virtual/events/winner-price", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ktru_code: ktru,
+        notification_number: notice,
+        line_index: line === "" ? 0 : Number(line),
+        winner_unit_price: input.value
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.j && res.j.detail) || "Не удалось сохранить цену победителя.");
+        if (res.j.winner_unit_price == null) input.value = "";
+        else input.value = String(res.j.winner_unit_price);
+      }).catch(function (e) { showErr(e.message || String(e)); });
+  }
+
+  function saveMatchOverride(sel) {
+    var notice = sel.getAttribute("data-notice") || "";
+    var ktru = sel.getAttribute("data-ktru") || "";
+    var line = sel.getAttribute("data-line") || "";
+    fetch("/api/rts/pp/virtual/events/char-status", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ktru_code: ktru,
+        notification_number: notice,
+        line_index: line === "" ? 0 : Number(line),
+        char_status_override: sel.value
+      })
+    }).then(function (r) { return r.json().then(function (j) { return { ok: r.ok, j: j }; }); })
+      .then(function (res) {
+        if (!res.ok) throw new Error((res.j && res.j.detail) || "Не удалось сохранить статус.");
+        loadEvents();
+      }).catch(function (e) { showErr(e.message || String(e)); });
+  }
+
+  document.addEventListener("change", function (ev) {
+    var input = ev.target && ev.target.closest && ev.target.closest(".pp-virtual-ev-winner");
+    if (input) saveWinnerPrice(input);
+    var ov = ev.target && ev.target.closest && ev.target.closest(".pp-virtual-ev-match-ov");
+    if (ov) saveMatchOverride(ov);
+  });
+  document.addEventListener("keydown", function (ev) {
+    if (ev.key !== "Enter") return;
+    var input = ev.target && ev.target.closest && ev.target.closest(".pp-virtual-ev-winner");
+    if (!input) return;
+    ev.preventDefault();
+    input.blur();
+  });
+
+  $("pp-virtual-ev-ktru").addEventListener("change", loadEvents);
+  $("pp-virtual-ev-matched").addEventListener("change", loadEvents);
+  Array.prototype.forEach.call(document.querySelectorAll(".pp-virtual-ev-days"), function (btn) {
+    btn.addEventListener("click", function () {
+      state.days = Number(btn.getAttribute("data-days") || "7");
+      loadEvents();
+    });
+  });
+  loadEvents();
+})();
+</script>
+{% endblock %}

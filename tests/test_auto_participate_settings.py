@@ -5,9 +5,13 @@ from pathlib import Path
 import pytest
 
 from auto_participate_settings import (
+    apply_admin_allowed_etp_names,
     apply_admin_global_enabled,
+    allowed_etp_names,
     count_enabled_profiles,
     effective_min_amount,
+    etp_name_allowed,
+    etp_names_text_from_settings,
     global_enabled,
     load_settings,
     parse_form_profile_rules,
@@ -32,6 +36,7 @@ def test_save_and_load_roundtrip(tmp_path):
     payload["profiles"]["IPSokolova"] = parse_profile_rules(
         {
             "enabled": True,
+            "auto_publish": True,
             "min_purchase_amount": 150000,
             "ktru_mode": "whitelist",
             "ktru_codes": ["08.12.12.140-00000005", "26.20.16.120-00000101"],
@@ -43,6 +48,7 @@ def test_save_and_load_roundtrip(tmp_path):
     loaded = load_settings(path)
     rules = profile_rules(loaded, "IPSokolova")
     assert rules["enabled"] is True
+    assert rules["auto_publish"] is True
     assert rules["min_purchase_amount"] == 150000
     assert rules["ktru_mode"] == "whitelist"
     assert rules["ktru_codes"] == ["08.12.12.140-00000005", "26.20.16.120-00000101"]
@@ -59,6 +65,7 @@ def test_parse_form_profile_rules():
     parsed = parse_form_profile_rules(
         {
             "enabled": "on",
+            "auto_publish": "1",
             "min_purchase_amount": "200 000",
             "ktru_mode": "whitelist",
             "ktru_codes_text": "08.12.12.140-00000005\n26.20.16.120-00000101",
@@ -67,6 +74,7 @@ def test_parse_form_profile_rules():
         }
     )
     assert parsed["enabled"] is True
+    assert parsed["auto_publish"] is True
     assert parsed["min_purchase_amount"] == 200000
     assert parsed["ktru_mode"] == "whitelist"
     assert parsed["ktru_codes"] == ["08.12.12.140-00000005", "26.20.16.120-00000101"]
@@ -102,3 +110,21 @@ def test_apply_admin_global_enabled_toggles_all_profiles(tmp_path):
     loaded2 = load_settings(path)
     assert global_enabled(loaded2) is False
     assert count_enabled_profiles(loaded2) == 0
+
+
+def test_allowed_etp_names_roundtrip(tmp_path):
+    path = settings_path(tmp_path)
+    payload = load_settings(path)
+    payload = apply_admin_allowed_etp_names(
+        payload,
+        etp_names_text="АО «Сбербанк-АСТ»\nРТС-тендер\nАО «Сбербанк-АСТ»",
+    )
+    save_settings(path, payload)
+    loaded = load_settings(path)
+    assert allowed_etp_names(loaded) == ["АО «Сбербанк-АСТ»", "РТС-тендер"]
+    assert etp_names_text_from_settings(loaded) == "АО «Сбербанк-АСТ»\nРТС-тендер"
+    assert etp_name_allowed("АО «Сбербанк-АСТ»", allowed_etp_names(loaded)) is True
+    assert etp_name_allowed("ЭТП ГПБ", allowed_etp_names(loaded)) is False
+    assert etp_name_allowed("что угодно", []) is True
+    assert etp_name_allowed("", ["РТС-тендер"]) is False
+

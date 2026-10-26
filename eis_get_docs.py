@@ -138,10 +138,9 @@ def build_http_session(
             if bundle_resolved:
                 ctx.load_verify_locations(cafile=bundle_resolved)
         else:
-            ctx = urllib3_ssl.create_urllib3_context(
-                cert_reqs=ssl.CERT_NONE,
-                check_hostname=False,
-            )
+            # urllib3>=2 dropped check_hostname kwarg; set on context after create.
+            ctx = urllib3_ssl.create_urllib3_context(cert_reqs=ssl.CERT_NONE)
+            ctx.check_hostname = False
         if ssl_legacy:
             try:
                 ctx.set_ciphers("DEFAULT:@SECLEVEL=1")

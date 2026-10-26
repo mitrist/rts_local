@@ -2,12 +2,15 @@
 {% block content %}
 <h2>Черновики ПП</h2>
 <p class="hint">
-  Черновики из подбора предложений («Участвовать») и из образцов ПП конкурентов («Создать черновик»).
+  Черновики из подбора предложений («Участвовать»), из образцов ПП конкурентов («Создать черновик») и из справочника КТРУ.
   Статусы из ЛК РТС подгружаются только при <code>RTS_PP_DRAFTS_ENRICH_RTS=1</code> в env сервера.
   Открывайте позиции по прямым ссылкам в колонке «РТС».
   {% if pp_publish_enabled %}
   Публикация ПП: кнопка «Опубликовать» (нужны КриптоПро Browser Plugin и ЭП на этом ПК).
   {% endif %}
+</p>
+<p>
+  <a class="button" href="{{ request.url_for('page_pp_create') }}">Создать ПП</a>
 </p>
 
 {% if cookie_meta.admin_view %}
@@ -67,6 +70,15 @@
           {% if row.draft_source == 'monitor' and row.offer_price_list_item_id %}
             <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=row.offer_price_list_item_id) }}">Образец конкурента</a>
             <div class="hint"><code>{{ row.offer_price_list_item_id }}</code></div>
+          {% elif row.draft_source == 'core' %}
+            <span>Ядро КТРУ</span>
+            <div class="hint"><code>{{ row.ktru_code or '—' }}</code></div>
+          {% elif row.draft_source == 'virtual_core' %}
+            <span>Виртуальное_ядро</span>
+            <div class="hint"><code>{{ row.ktru_code or '—' }}</code></div>
+          {% elif row.draft_source == 'catalog' or row.purchase_number == 'catalog' %}
+            <span>Справочник КТРУ</span>
+            <div class="hint"><code>{{ row.line_key or '—' }}</code></div>
           {% else %}
             <span>Извещение</span>
             <div class="hint"><code>{{ row.purchase_number or '—' }}</code></div>
@@ -76,7 +88,11 @@
         <td>{{ row.item_name or '—' }}</td>
         <td>
           {% if row.rts_draft_id %}
-            <code>{{ row.rts_draft_id }}</code>
+            {% if row.rts_draft_id < 0 %}
+              <span class="hint">локальный</span>
+            {% else %}
+              <code>{{ row.rts_draft_id }}</code>
+            {% endif %}
             {% if row.price_list_item_id %}
               <div class="hint">pli {{ row.price_list_item_id }}</div>
             {% endif %}
@@ -116,11 +132,11 @@
           {% if row.edit_url %}
             <a href="{{ row.edit_url }}" target="_blank" rel="noopener" class="button secondary">Открыть в РТС</a>
           {% endif %}
-          {% if pp_publish_enabled and row.rts_draft_id and row.status != 'error' %}
+          {% if pp_publish_enabled and row.rts_draft_id and row.status != 'error' and row.draft_source != 'virtual_core' %}
             <button type="button" class="button pp-draft-publish-btn"
                     data-rts-draft-id="{{ row.rts_draft_id }}"
                     data-source="{{ row.draft_source or 'notice' }}"
-                    data-source-key="{{ row.purchase_number }}|{{ row.line_key }}">Опубликовать</button>
+                    data-source-key="{% if row.publish_source_key %}{{ row.publish_source_key }}{% elif row.draft_source == 'catalog' %}catalog:{{ row.line_key }}{% else %}{{ row.purchase_number }}|{{ row.line_key }}{% endif %}">Опубликовать</button>
           {% endif %}
           <button type="button" class="button danger pp-draft-delete-btn"
                   data-purchase-number="{{ row.purchase_number }}"
@@ -149,7 +165,7 @@
   </div>
   {% endif %}
   {% else %}
-  <p class="hint">Пока нет записей. Создайте черновик через «Участвовать» в подборе предложений или «Создать черновик» на странице образца ПП конкурента.</p>
+  <p class="hint">Пока нет записей. Создайте черновик через «Участвовать» в подборе предложений, «Создать черновик» на странице образца ПП конкурента или <a href="{{ request.url_for('page_pp_create') }}">мастер «Создать ПП»</a>.</p>
   {% endif %}
 </div>
 
@@ -226,6 +242,6 @@
 {% if pp_publish_enabled %}
 <script>window.__PP_PUBLISH_ENABLED = true;</script>
 <script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
-<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=1"></script>
+<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=8"></script>
 {% endif %}
 {% endblock %}

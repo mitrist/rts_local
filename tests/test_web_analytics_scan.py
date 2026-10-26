@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from fastapi.testclient import TestClient
 
-from eis_analytics_db import record_notice_html_page, record_rss_poll_run
+from eis_analytics_db import record_notice_html_page, record_rss_ktru_hints, record_rss_poll_run
 from eis_history_db import record_eis_history_poll_run
 from eis_ezt_archive import NoticeMatch
 from eis_ktru_characteristics import CustomerCharacteristic, KtruPurchaseLine
@@ -282,9 +282,11 @@ def test_rss_poll_auto_fetches_notice_html(monkeypatch, tmp_path):
             ok=True,
             errors=[],
         )
+        record_rss_ktru_hints(db_path, ["0117300004426000001"], WATCH_KTRU)
         return FakeResult()
 
     monkeypatch.setattr(web_main, "run_eis_rss_poll", fake_rss_poll)
+    monkeypatch.setattr(web_main, "_catalog_ktru_codes", lambda: [WATCH_KTRU])
     monkeypatch.setattr(
         web_main,
         "fetch_notice_common_info_html",
@@ -293,6 +295,7 @@ def test_rss_poll_auto_fetches_notice_html(monkeypatch, tmp_path):
     monkeypatch.setattr(web_main, "parse_notice_common_info_html", lambda html, purchase_number, source_url: [])
 
     web_main._run_eis_rss_ui_cron_poll()
+    web_main._auto_fetch_notice_html_after_rss_poll()
 
     payload = web_main.notice_html_payload(db, "0117300004426000001")
     assert payload["status"] == "loaded"
@@ -320,8 +323,10 @@ def test_html_auto_fetch_processes_existing_rss_rows(monkeypatch, tmp_path):
         ok=True,
         errors=[],
     )
+    record_rss_ktru_hints(db, ["0117300004426000099"], WATCH_KTRU)
     monkeypatch.setattr(web_main, "_META", tmp_path)
     monkeypatch.setattr(web_main, "_eis_analytics_db_path", lambda: db)
+    monkeypatch.setattr(web_main, "_catalog_ktru_codes", lambda: [WATCH_KTRU])
     monkeypatch.setenv("EIS_HTML_AUTO_FETCH", "1")
     monkeypatch.setenv("EIS_HTML_AUTO_FETCH_DELAY_SEC", "0")
     monkeypatch.setattr(

@@ -1,0 +1,215 @@
+{
+  "_cache_meta": {
+    "ktru_code": "20.41.31.130-00000003",
+    "source": "pp_dump"
+  },
+  "item": {
+    "code": "20.41.31.130-00000003",
+    "name": "Мыло туалетное жидкое",
+    "version": 1,
+    "actual": true,
+    "okeis": [
+      {
+        "code": "796",
+        "fullName": "Штука"
+      }
+    ],
+    "characteristics": [
+      {
+        "id": 520210,
+        "code": "718c69ee-9",
+        "name": "Наличие антибактериального компонента",
+        "isActual": true,
+        "isRequired": false,
+        "characteristicType": {
+          "id": 1,
+          "name": "Качественная"
+        },
+        "characteristicKind": {
+          "id": 2,
+          "name": "Изменяемая заказчиком с выбором одного значения"
+        },
+        "characteristicValues": [
+          {
+            "id": 2697351,
+            "qualityDescription": "Да",
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "characteristicId": 520210,
+            "characteristicCode": "718c69ee-9",
+            "characteristicName": "Наличие антибактериального компонента",
+            "okeiCode": "",
+            "okeiFullName": null,
+            "valueFormatId": null,
+            "valueCode": "2697351"
+          },
+          {
+            "id": 2697352,
+            "qualityDescription": "Нет",
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "characteristicId": 520210,
+            "characteristicCode": "718c69ee-9",
+            "characteristicName": "Наличие антибактериального компонента",
+            "okeiCode": "",
+            "okeiFullName": null,
+            "valueFormatId": null,
+            "valueCode": "2697352"
+          }
+        ]
+      },
+      {
+        "id": 520211,
+        "code": "cbadbb66-f",
+        "name": "Наличие ароматической отдушки",
+        "isActual": true,
+        "isRequired": false,
+        "characteristicType": {
+          "id": 1,
+          "name": "Качественная"
+        },
+        "characteristicKind": {
+          "id": 2,
+          "name": "Изменяемая заказчиком с выбором одного значения"
+        },
+        "characteristicValues": [
+          {
+            "id": 2697354,
+            "qualityDescription": "Нет",
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "characteristicId": 520211,
+            "characteristicCode": "cbadbb66-f",
+            "characteristicName": "Наличие ароматической отдушки",
+            "okeiCode": "",
+            "okeiFullName": null,
+            "valueFormatId": null,
+            "valueCode": "2697354"
+          },
+          {
+            "id": 2697353,
+            "qualityDescription": "Да",
+            "concreteValue": null,
+            "minValue": null,
+            "maxValue": null,
+            "minMathNotation": null,
+            "maxMathNotation": null,
+            "characteristicId": 520211,
+            "characteristicCode": "cbadbb66-f",
+            "characteristicName": "Наличие ароматической отдушки",
+            "okeiCode": "",
+            "okeiFullName": null,
+            "valueFormatId": null,
+            "valueCode": "2697353"
+          }
+        ]
+      },
+      {
+        "id": 520212,
+        "code": "b36787f4-f",
+        "name": "Объем тары",
+        "isActual": true,
+        "isRequired": false,
+        "characteristicType": {
+          "id": 2,
+          "name": "Количественная"
+        },
+        "characteristicKind": {
+          "id": 2,
+          "name": "Изменяемая заказчиком с выбором одного значения"
+        },
+        "characteristicValues": [
+          {
+            "id": 2697360,
+            "qualityDescription": null,
+            "concreteValue": null,
+            "minValue": "5000,0",
+            "maxValue": null,
+            "minMathNotation": "ge",
+            "maxMathNotation": null,
+            "characteristicId": 520212,
+            "characteristicCode": "b36787f4-f",
+            "characteristicName": "Объем тары",
+            "okeiCode": "111",
+            "okeiFullName": "Кубический сантиметр; миллилитр",
+            "valueFormatId": 1,
+            "valueCode": "2697360"
+          },
+          {
+            "id": 2697356,
+            "qualityDescription": null,
+            "concreteValue": null,
+            "minValue": "250,0",
+            "maxValue": "500,0",
+            "minMathNotation": "ge",
+            "maxMathNotation": "lt",
+            "characteristicId": 520212,
+            "characteristicCode": "b36787f4-f",
+            "characteristicName": "Объем тары",
+            "okeiCode": "111",
+            "okeiFullName": "Кубический сантиметр; миллилитр",
+            "valueFormatId": 1,
+            "valueCode": "2697356"
+          },
+          {
+            "id": 2697358,
+            "qualityDescription": null,
+            "concreteValue": null,
+            "minValue": "1000,0",
+            "maxValue": "2000,0",
+            "minMathNotation": "ge",
+            "maxMathNotation": "lt",
+            "characteristicId": 520212,
+            "characteristicCode": "b36787f4-f",
+            "characteristicName": "Объем тары",
+            "okeiCode": "111",
+            "okeiFullName": "Кубический сантиметр; миллилитр",
+            "valueFormatId": 1,
+            "valueCode": "2697358"
+          },
+          {
+            "id": 2697357,
+            "qualityDescription": null,
+            "concreteValue": null,
+            "minValue": "500,0",
+            "maxValue": "1000,0",
+            "minMathNotation": "ge",
+            "maxMathNotation": "lt",
+            "characteristicId": 520212,
+            "characteristicCode": "b36787f4-f",
+            "characteristicName": "Объем тары",
+            "okeiCode": "111",
+            "okeiFullName": "Кубический сантиметр; миллилитр",
+            "valueFormatId": 1,
+            "valueCode": "2697357"
+          },
+          {
+            "id": 2697359,
+            "qualityDescription": null,
+            "concreteValue": null,
+            "minValue": "2000,0",
+            "maxValue": "5000,0",
+            "minMathNotation": "ge",
+            "maxMathNotation": "lt",
+            "characteristicId": 520212,
+            "characteristicCode": "b36787f4-f",
+            "characteristicName": "Объем тары",
+            "okeiCode": "111",
+            "okeiFullName": "Кубический сантиметр; миллилитр",
+            "valueFormatId": 1,
+            "valueCode": "2697359"
+          }
+        ]
+      }
+    ]
+  }
+}

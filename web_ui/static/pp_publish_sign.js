@@ -13,9 +13,19 @@
   var CAPICOM_CERTIFICATE_FIND_TIME_VALID = 9;
   var CAPICOM_CERTIFICATE_FIND_EXTENDED_PROPERTY = 6;
   var CAPICOM_CERT_INFO_SUBJECT_SIMPLE_NAME = 0;
-  var CAPICOM_AUTHENTICATED_ATTRIBUTE_SIGNING_TIME = 0;
-  var CADESCOM_AUTHENTICATED_ATTRIBUTE_DOCUMENT_NAME = 1;
+  var CAPICOM_CERTIFICATE_INCLUDE_END_ENTITY_ONLY = 2;
+  // Match RTS CryptoProBrowserPluginProviderAsync.js
+  var CADESCOM_HASH_ALGORITHM_SHA1 = 0;
+  var CADESCOM_HASH_ALGORITHM_CP_GOST_3411 = 100;
+  var CADESCOM_HASH_ALGORITHM_CP_GOST_3411_2012_256 = 101;
+  var CADESCOM_HASH_ALGORITHM_CP_GOST_3411_2012_512 = 102;
+  var OID_CP_GOST_R3410_12_256 = "1.2.643.7.1.1.1.1";
+  var OID_CP_GOST_R3410_12_512 = "1.2.643.7.1.1.1.2";
+  var OID_CP_RSA = "1.2.840.113549.1.1.1";
+  var OID_CP_STB_1179_99 = "1.3.6.1.4.1.12656.1.37";
+  var OID_CP_STB_34_101_45 = "1.2.112.0.2.0.34.101.45.2.1";
 
+  var CERT_STORAGE_KEY = "rtsPpCertThumbprint";
   var selectedCertThumbprint = null;
 
   function statusLabels(status) {
@@ -29,6 +39,65 @@
       cancelled: "Отменено"
     };
     return map[status] || status || "";
+  }
+
+  function normalizeThumbprint(value) {
+    return String(value || "")
+      .replace(/\s+/g, "")
+      .toUpperCase();
+  }
+
+  function loadSavedThumbprint() {
+    if (selectedCertThumbprint) {
+      return normalizeThumbprint(selectedCertThumbprint);
+    }
+    try {
+      if (global.localStorage) {
+        var raw = global.localStorage.getItem(CERT_STORAGE_KEY);
+        if (raw) {
+          selectedCertThumbprint = raw;
+          return normalizeThumbprint(raw);
+        }
+      }
+    } catch (e) {
+      /* private mode / blocked storage */
+    }
+    return "";
+  }
+
+  function saveThumbprint(thumbprint) {
+    var norm = normalizeThumbprint(thumbprint);
+    if (!norm) return;
+    selectedCertThumbprint = norm;
+    try {
+      if (global.localStorage) {
+        global.localStorage.setItem(CERT_STORAGE_KEY, norm);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function clearSavedThumbprint() {
+    selectedCertThumbprint = null;
+    try {
+      if (global.localStorage) {
+        global.localStorage.removeItem(CERT_STORAGE_KEY);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function findCertByThumbprint(list, thumbprint) {
+    var want = normalizeThumbprint(thumbprint);
+    if (!want) return null;
+    for (var j = 0; j < list.length; j++) {
+      if (normalizeThumbprint(list[j].thumbprint) === want) {
+        return list[j];
+      }
+    }
+    return null;
   }
 
   function fetchJson(url, options) {
@@ -120,73 +189,101 @@
           })
           .then(function (list) {
             store.Close();
-            if (selectedCertThumbprint) {
-              for (var j = 0; j < list.length; j++) {
-                if (String(list[j].thumbprint).toUpperCase() === String(selectedCertThumbprint).toUpperCase()) {
-                  return list[j].cert;
-                }
-              }
+            var saved = loadSavedThumbprint();
+            var remembered = findCertByThumbprint(list, saved);
+            if (remembered) {
+              saveThumbprint(remembered.thumbprint);
+              return remembered.cert;
             }
             if (list.length === 1) {
-              selectedCertThumbprint = list[0].thumbprint;
+              saveThumbprint(list[0].thumbprint);
               return list[0].cert;
             }
             var lines = list.map(function (c, idx) {
               return (idx + 1) + ") " + c.subject + " [" + c.thumbprint + "]";
             });
             var choice = global.prompt(
-              "Выберите сертификат (номер):\n" + lines.join("\n"),
+              "Выберите сертификат (номер).\n" +
+                "Выбор сохранится в браузере — дальше спрашивать не будем.\n\n" +
+                lines.join("\n"),
               "1"
             );
             var n = parseInt(choice, 10);
             if (!n || n < 1 || n > list.length) {
               throw new Error("Сертификат не выбран.");
             }
-            selectedCertThumbprint = list[n - 1].thumbprint;
+            saveThumbprint(list[n - 1].thumbprint);
             return list[n - 1].cert;
           });
       });
     });
   }
 
-  function hexToBase64(hex) {
-    var h = String(hex || "").replace(/\s+/g, "");
-    if (h.length % 2) h = "0" + h;
-    var bytes = [];
-    for (var i = 0; i < h.length; i += 2) {
-      bytes.push(parseInt(h.substr(i, 2), 16));
+  function normalizeHexHash(hex) {
+    return String(hex || "").replace(/\s+/g, "").toUpperCase();
+  }
+
+  function isRsaOrForeignOid(oid) {
+    return (
+      oid === OID_CP_RSA ||
+      oid === OID_CP_STB_1179_99 ||
+      oid === OID_CP_STB_34_101_45
+    );
+  }
+
+  function hashAlgorithmForCertOid(oid) {
+    if (oid === OID_CP_GOST_R3410_12_256) {
+      return CADESCOM_HASH_ALGORITHM_CP_GOST_3411_2012_256;
     }
-    var bin = "";
-    for (var j = 0; j < bytes.length; j++) {
-      bin += String.fromCharCode(bytes[j]);
+    if (oid === OID_CP_GOST_R3410_12_512) {
+      return CADESCOM_HASH_ALGORITHM_CP_GOST_3411_2012_512;
     }
-    return global.btoa(bin);
+    if (isRsaOrForeignOid(oid)) {
+      return CADESCOM_HASH_ALGORITHM_SHA1;
+    }
+    // Legacy GOST R 34.10-2001 and unknown GOST → GOST R 34.11-94
+    return CADESCOM_HASH_ALGORITHM_CP_GOST_3411;
+  }
+
+  function getCertAlgorithmOid(cert) {
+    return cert.PublicKey().then(function (pk) {
+      return pk.Algorithm.then(function (alg) {
+        return alg.Value;
+      });
+    });
+  }
+
+  function configureSigner(signer, cert) {
+    return signer.propset_Certificate(cert).then(function () {
+      // Same as RTS LK provider — end-entity only keeps CMS compact and matches verify.
+      if (typeof signer.propset_Options === "function") {
+        return signer.propset_Options(CAPICOM_CERTIFICATE_INCLUDE_END_ENTITY_ONLY);
+      }
+      return undefined;
+    });
   }
 
   function signOneAsync(cert, req) {
     return global.cadesplugin.CreateObjectAsync("CAdESCOM.CPSigner").then(function (signer) {
-      return signer.propset_Certificate(cert).then(function () {
+      return configureSigner(signer, cert).then(function () {
         return global.cadesplugin.CreateObjectAsync("CAdESCOM.CadesSignedData").then(function (signedData) {
           var encoding = req.encoding === "hex_hash" ? "hex_hash" : "base64";
           var chain;
           if (encoding === "hex_hash") {
-            chain = global.cadesplugin.CreateObjectAsync("CAdESCOM.HashedData").then(function (hashed) {
-              return hashed.propset_Algorithm(4 /* CADESCOM_HASH_ALGORITHM_SHA_256 */)
-                .then(function () {
-                  // Prefer SetHashValue with Base64 of raw hash bytes (SHA-256 from RTS).
-                  var b64 = hexToBase64(req.data);
-                  return hashed.SetHashValue(b64).then(function () {
+            var hexHash = normalizeHexHash(req.data);
+            if (!/^[0-9A-F]+$/.test(hexHash) || hexHash.length % 2) {
+              return Promise.reject(new Error("Некорректный hash файла для подписи."));
+            }
+            chain = getCertAlgorithmOid(cert).then(function (oid) {
+              var algo = hashAlgorithmForCertOid(oid);
+              return global.cadesplugin.CreateObjectAsync("CAdESCOM.HashedData").then(function (hashed) {
+                return hashed.propset_Algorithm(algo).then(function () {
+                  // RTS passes hex string to SetHashValue (not Base64).
+                  return hashed.SetHashValue(hexHash).then(function () {
                     return signedData.SignHash(hashed, signer, CADESCOM_CADES_BES);
                   });
-                })
-                .catch(function () {
-                  // Fallback: treat hash hex as content (some plugin builds)
-                  return signedData.propset_ContentEncoding(CADESCOM_BASE64_TO_BINARY).then(function () {
-                    return signedData.propset_Content(hexToBase64(req.data)).then(function () {
-                      return signedData.SignCades(signer, CADESCOM_CADES_BES, true);
-                    });
-                  });
                 });
+              });
             });
           } else {
             chain = signedData.propset_ContentEncoding(CADESCOM_BASE64_TO_BINARY).then(function () {
@@ -206,17 +303,62 @@
     });
   }
 
-  function signRequests(signRequests) {
+  function signKey(req) {
+    return String((req && req.encoding) || "") + "\n" + String((req && req.data) || "");
+  }
+
+  function signRequests(signRequests, onProgress) {
     if (!canAsync()) {
       return Promise.reject(
         new Error("Нужен КриптоПро Browser Plugin с поддержкой CreateObjectAsync (Chrome/Yandex/Edge).")
       );
     }
+    var reqs = signRequests || [];
     return pickCertificateAsync().then(function (cert) {
+      var cache = {};
       var seq = Promise.resolve([]);
-      (signRequests || []).forEach(function (req) {
+      var uniqueDone = 0;
+      var uniqueTotal = 0;
+      var seen = {};
+      reqs.forEach(function (req) {
+        var key = signKey(req);
+        if (!seen[key]) {
+          seen[key] = true;
+          uniqueTotal += 1;
+        }
+      });
+      reqs.forEach(function (req, idx) {
         seq = seq.then(function (acc) {
+          var key = signKey(req);
+          var guid = req.file_guid == null ? null : req.file_guid;
+          if (cache[key]) {
+            acc.push({
+              fileGuid: guid,
+              signatureWithTimeStamp: cache[key]
+            });
+            if (typeof onProgress === "function") {
+              onProgress({
+                index: idx + 1,
+                total: reqs.length,
+                uniqueDone: uniqueDone,
+                uniqueTotal: uniqueTotal,
+                reused: true
+              });
+            }
+            return acc;
+          }
+          if (typeof onProgress === "function") {
+            onProgress({
+              index: idx + 1,
+              total: reqs.length,
+              uniqueDone: uniqueDone + 1,
+              uniqueTotal: uniqueTotal,
+              reused: false
+            });
+          }
           return signOneAsync(cert, req).then(function (sig) {
+            cache[key] = sig.signatureWithTimeStamp;
+            uniqueDone += 1;
             acc.push(sig);
             return acc;
           });
@@ -272,7 +414,15 @@
         throw new Error(job.error || ("Неожиданный статус: " + job.status));
       }
       set(statusLabels("awaiting_signature") + "…", "pending");
-      return signRequests(job.sign_requests || []).then(function (signatures) {
+      var reqs = job.sign_requests || [];
+      return signRequests(reqs, function (p) {
+        if (!p || p.reused) return;
+        set(
+          "КриптоПро: подпись " + p.uniqueDone + " из " + p.uniqueTotal +
+            " (слотов " + p.index + "/" + p.total + ")…",
+          "pending"
+        );
+      }).then(function (signatures) {
         set("Публикуем в РТС…", "pending");
         return fetchJson("/api/rts/pp/publish/submit-signatures", {
           method: "POST",
@@ -291,7 +441,7 @@
       return finalJob;
     }).catch(function (err) {
       var msg = err && err.message ? err.message : String(err);
-      if (/404|отключена|disabled/i.test(msg)) {
+      if (/RTS_PP_PUBLISH_ENABLED|Публикация ПП отключена/i.test(msg)) {
         msg = "Публикация отключена на сервере (RTS_PP_PUBLISH_ENABLED).";
       }
       set(msg, "error");
@@ -302,6 +452,101 @@
   global.RtsPpPublish = {
     run: runPublishFlow,
     statusLabels: statusLabels,
-    signRequests: signRequests
+    signRequests: signRequests,
+    watchPending: watchPendingSignatures,
+    clearPreferredCert: clearSavedThumbprint,
+    getPreferredCertThumbprint: loadSavedThumbprint
   };
+
+  var _pendingWatchStarted = false;
+  var _pendingBusy = false;
+  var _promptedJobIds = {};
+
+  function watchPendingSignatures(opts) {
+    opts = opts || {};
+    if (_pendingWatchStarted) return;
+    _pendingWatchStarted = true;
+    var intervalMs = opts.intervalMs || 20000;
+    var runOnce = function () {
+      if (_pendingBusy) return;
+      if (document.hidden) return;
+      fetchJson("/api/rts/pp/publish/pending-signatures", { method: "GET" })
+        .then(function (data) {
+          if (!data || !data.enabled || !data.jobs || !data.jobs.length) return;
+          var jobs = data.jobs.filter(function (j) {
+            var id = String(j.job_id || "");
+            return id && !_promptedJobIds[id];
+          });
+          if (!jobs.length) return;
+          var autoJobs = jobs.filter(function (j) {
+            return j.source === "auto_monitor" || j.source === "notice" || j.source === "core";
+          });
+          var pick = autoJobs.length ? autoJobs : jobs;
+          // Silent when cert thumbprint already saved (first pick stores rtsPpCertThumbprint).
+          var silent = !!loadSavedThumbprint();
+          if (!silent) {
+            var msg =
+              "Есть " +
+              pick.length +
+              " ПП, ожидающих подписи ЭП для публикации.\n\n" +
+              "Подписать сейчас через КриптоПро?\n" +
+              "Сертификат сохранится — следующие подписи без этого вопроса.";
+            if (!global.confirm(msg)) {
+              pick.forEach(function (j) {
+                _promptedJobIds[String(j.job_id)] = true;
+              });
+              return;
+            }
+          }
+          _pendingBusy = true;
+          var seq = Promise.resolve();
+          pick.forEach(function (j) {
+            var jobId = String(j.job_id);
+            _promptedJobIds[jobId] = true;
+            seq = seq.then(function () {
+              return runPublishFlow({
+                rtsDraftId: j.rts_draft_id,
+                source: j.source || "",
+                sourceKey: j.source_key || "",
+                forceNew: false,
+                onStatus: function (m) {
+                  if (opts.onStatus) opts.onStatus(m);
+                }
+              }).catch(function (err) {
+                if (silent) {
+                  // Allow retry on next poll tick when auto-signing.
+                  delete _promptedJobIds[jobId];
+                  if (opts.onStatus) {
+                    opts.onStatus(
+                      "Публикация " +
+                        (j.rts_draft_id || "") +
+                        ": " +
+                        (err && err.message ? err.message : String(err)),
+                      "error"
+                    );
+                  }
+                  return;
+                }
+                global.alert(
+                  "Публикация черновика " +
+                    (j.rts_draft_id || "") +
+                    ": " +
+                    (err && err.message ? err.message : String(err))
+                );
+              });
+            });
+          });
+          return seq.then(function () {
+            _pendingBusy = false;
+          }, function () {
+            _pendingBusy = false;
+          });
+        })
+        .catch(function () {
+          /* ignore poll errors */
+        });
+    };
+    runOnce();
+    global.setInterval(runOnce, intervalMs);
+  }
 })(window);

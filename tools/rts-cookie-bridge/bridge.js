@@ -11,6 +11,9 @@ const RtsCookieBridge = (() => {
     "https://platform.rts-tender.ru/",
     "https://platform.rts-tender.ru/api-gateway/",
     "https://app.rts-tender.ru/",
+    "https://app.rts-tender.ru/supplier/lk/App504.aspx",
+    "https://app-gost.rts-tender.ru/",
+    "https://app-gost.rts-tender.ru/supplier/lk/App504.aspx",
     "https://www.rts-tender.ru/",
     "https://rts-tender.ru/",
   ];
@@ -20,6 +23,7 @@ const RtsCookieBridge = (() => {
     "offers.rts-tender.ru",
     "platform.rts-tender.ru",
     "app.rts-tender.ru",
+    "app-gost.rts-tender.ru",
     "www.rts-tender.ru",
   ];
   const AUTH_COOKIE_NAMES = [".Auth.Sso", ".Auth.Rts.P", ".Auth.Rts.C"];
@@ -28,6 +32,11 @@ const RtsCookieBridge = (() => {
 
   const AUTO_ALARM_NAME = "rts-cookie-bridge-auto";
   const AUTO_REFRESH_INTERVAL_SEC = 180;
+  const LK_ORIGINS = ["https://app.rts-tender.ru", "https://app-gost.rts-tender.ru"];
+  const AUCTION_SEARCH_PATH = "/supplier/lk/api/auction/search";
+  const PROCEDURE_MODEL_PATH = "/supplier/lk/api/preliminaryofferspurchase/procedure/model";
+  const LOT_ITEMS_PATH = "/supplier/lk/api/lot-items/search/paged";
+  const MAX_NOTICES_PER_KTRU = 40;
 
   const PROFILE_HINTS = {
     IPSokolova:
@@ -187,6 +196,188 @@ const RtsCookieBridge = (() => {
 
   async function saveSyncSettings({ apiUrl, apiUrl2, apiKey, profile }) {
     await chrome.storage.sync.set({ apiUrl, apiUrl2, apiKey, profile });
+  }
+
+  function cookieSaveSibling(saveUrl, name) {
+    const url = new URL(normalizeApiUrl(saveUrl));
+    url.pathname = url.pathname.replace(
+      /\/api\/rts\/cookie\/save\/?$/,
+      "/api/rts/cookie/" + name
+    );
+    return url.toString();
+  }
+
+  function auctionSearchBody(ktruCode, publicationFrom, pageNumber) {
+    return {
+      notificationNumber: null,
+      name: null,
+      aggregateServicePurchaseSelectedTab: "0",
+      aggregateServicePurchaseStates: null,
+      kladrCodeRegion: "-1",
+      collectivePurchasing: null,
+      hasComplaint: null,
+      withoutApplications: null,
+      organizer: null,
+      useOrganizerName: true,
+      useOrganizerInn: null,
+      customer: null,
+      useCustomerName: true,
+      useCustomerInn: null,
+      startPriceMin: "",
+      startPriceMax: "",
+      favorite: null,
+      publicationDate: { from: publicationFrom || null, to: null },
+      applicationEndDate: { from: null, to: null },
+      tradingDate: { from: null, to: null },
+      aggregateProcedureTypes: ["108"],
+      aggregateCustomerLevels: [],
+      okpd2Codes: null,
+      ktruCode: ktruCode,
+      russianPreferenceCodes: [],
+      preferenceCodes: [],
+      restrictionCodes: [],
+      requirementCodes: [],
+      nationalModeCodes: [],
+      _search: false,
+      nd: Date.now(),
+      pageSize: "100",
+      pageNumber: pageNumber || 1,
+      sortingMethod: "",
+      sortingDirection: "asc",
+    };
+  }
+
+  async function lkFetchJson(origin, method, path, opts) {
+    const options = opts || {};
+    const url = new URL(origin + path);
+    const params = options.params || {};
+    Object.keys(params).forEach((key) => {
+      url.searchParams.set(key, params[key] == null ? "" : String(params[key]));
+    });
+    const r = await fetch(url.toString(), {
+      method: method,
+      credentials: "include",
+      headers: {
+        Accept: "application/json, text/plain, */*",
+        "Content-Type": "application/json;charset=UTF-8",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+      body: options.body == null ? undefined : JSON.stringify(options.body),
+    });
+    const text = await r.text();
+    const low = text.slice(0, 240).toLowerCase();
+    if (r.status !== 200 || low.indexOf("anti-ddos") >= 0 || low.indexOf("<!doctype html") >= 0) {
+      const err = new Error("ЛК " + origin.replace("https://", "") + " HTTP " + r.status);
+      err.waf = true;
+      throw err;
+    }
+    return JSON.parse(text);
+  }
+
+  async function lkFetchJsonFallback(method, path, opts) {
+    let last = null;
+    for (let i = 0; i < LK_ORIGINS.length; i += 1) {
+      try {
+        const data = await lkFetchJson(LK_ORIGINS[i], method, path, opts);
+        return { origin: LK_ORIGINS[i], data: data };
+      } catch (e) {
+        last = e;
+      }
+    }
+    throw last || new Error("ЛК РТС недоступен из браузера.");
+  }
+
+  async function fetchVirtualPollPlan(apiUrl, apiKey) {
+    const r = await fetch(cookieSaveSibling(apiUrl, "virtual-poll-plan"), {
+      headers: { "api-key": apiKey },
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      throw new Error(data.detail || data.message || "HTTP " + r.status);
+    }
+    return data;
+  }
+
+  async function postVirtualIngest(apiUrl, apiKey, payload) {
+    const r = await fetch(cookieSaveSibling(apiUrl, "virtual-ingest"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-key": apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      throw new Error(data.detail || data.message || "HTTP " + r.status);
+    }
+    return data;
+  }
+
+  async function collectEztForKtru(ktruCode, publicationFrom) {
+    const searchHit = await lkFetchJsonFallback("POST", AUCTION_SEARCH_PATH, {
+      body: auctionSearchBody(ktruCode, publicationFrom, 1),
+    });
+    const search = searchHit.data;
+    const rows = (((search || {}).Data || {}).Data || []).filter((row) => row && row.TradeId);
+    const procedures = {};
+    const lotItems = {};
+    const limit = Math.min(rows.length, MAX_NOTICES_PER_KTRU);
+    for (let i = 0; i < limit; i += 1) {
+      const row = rows[i];
+      try {
+        const procHit = await lkFetchJsonFallback("GET", PROCEDURE_MODEL_PATH, {
+          params: {
+            addingAction: "",
+            id: row.TradeId,
+            notificationNumber: "",
+            revisionNumber: "",
+          },
+        });
+        procedures[row.TradeId] = procHit.data;
+        const numericId = (((procHit.data || {}).CurrentVersionProcedure || {}).Id);
+        if (numericId) {
+          const lotHit = await lkFetchJsonFallback("POST", LOT_ITEMS_PATH, {
+            body: { TradeId: numericId, PageNumber: 1, PageLength: 50 },
+          });
+          lotItems[String(numericId)] = lotHit.data;
+        }
+      } catch (e) {
+        console.warn("RTS Cookie Bridge lot fetch failed", row.NotificationNumber, e);
+      }
+    }
+    return { search: search, procedures: procedures, lot_items: lotItems };
+  }
+
+  async function runVirtualPpPoll({ apiUrls, apiKey, profile }) {
+    if (profile === "customer_monitor") {
+      return { skipped: true, reason: "customer_monitor" };
+    }
+    const targets = (apiUrls || []).filter(Boolean);
+    if (!targets.length) return { skipped: true, reason: "no_api" };
+    const plan = await fetchVirtualPollPlan(targets[0], apiKey);
+    const codes = plan.ktru_codes || [];
+    if (!codes.length) return { skipped: true, reason: "no_ktru" };
+    const summaries = [];
+    for (let i = 0; i < codes.length; i += 1) {
+      const ktruCode = codes[i];
+      const dump = await collectEztForKtru(ktruCode, plan.publication_from);
+      for (let t = 0; t < targets.length; t += 1) {
+        const ingested = await postVirtualIngest(targets[t], apiKey, {
+          profile: profile,
+          ktru_code: ktruCode,
+          search: dump.search,
+          procedures: dump.procedures,
+          lot_items: dump.lot_items,
+        });
+        summaries.push({
+          ktru_code: ktruCode,
+          notices: ingested.notices || 0,
+          matched: ingested.matched || 0,
+        });
+      }
+    }
+    return { ok: true, summaries: summaries };
   }
 
   function collectApiUrls(settings) {
@@ -408,6 +599,13 @@ const RtsCookieBridge = (() => {
         probe: false,
         source: "rts-cookie-bridge-auto",
       });
+      if (result.ok) {
+        try {
+          await runVirtualPpPoll({ apiUrls, apiKey, profile });
+        } catch (pollErr) {
+          console.error("RTS Cookie Bridge virtual PP poll failed:", pollErr);
+        }
+      }
       await setAutoRefreshState({
         autoRefreshLastAt: new Date().toISOString(),
         autoRefreshLastOk: result.ok,

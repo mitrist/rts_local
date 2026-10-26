@@ -3,9 +3,11 @@
 <h2>{{ page_heading }}</h2>
 
 <div class="card">
-  <h3>Закупки с загруженными характеристиками</h3>
+  <h3>Закупки по КТРУ из справочника предложений</h3>
+  <p class="hint">Карточки по КТРУ из справочника загружаются автоматически. Для остальных КТРУ — кнопка «Загрузить карточку».</p>
   {% if html_flash_ok %}<div class="msg ok">{{ html_flash_ok }}</div>{% endif %}
   {% if html_flash_err %}<div class="msg err">{{ html_flash_err }}</div>{% endif %}
+  <div id="offer-row-publish-status" class="offer-participate-status offer-row-publish-status" hidden></div>
 
   <form method="get" action="{{ request.url_for(page_route) }}" class="offer-filter-form">
     {% if show_date_filter %}
@@ -35,6 +37,21 @@
       <button type="submit">Применить</button>
     </div>
     {% endif %}
+    {% if show_etp_filter %}
+    <label for="offer-etp-filter">Электронная площадка</label>
+    <div class="offer-filter-row">
+      <select name="etp" id="offer-etp-filter">
+        <option value="" {% if not etp_query %}selected{% endif %}>Все площадки</option>
+        {% for name in etp_options %}
+        <option value="{{ name }}" {% if etp_query == name %}selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Применить</button>
+      {% if etp_query %}
+        <a class="button secondary" href="{{ request.url_for(page_route) }}?{% if show_catalog_filter %}catalog={% if catalog_only %}1{% else %}0{% endif %}{% endif %}{% if ktru_query %}{% if show_catalog_filter %}&amp;{% endif %}ktru={{ ktru_query | urlencode }}{% endif %}">Сбросить площадку</a>
+      {% endif %}
+    </div>
+    {% endif %}
   </form>
 
   {% if rows and rows|length > 0 %}
@@ -61,6 +78,7 @@
   <table class="eis-table offer-matching-table" id="offer-matching-table">
     <colgroup>
       <col data-offer-col="purchase">
+      <col data-offer-col="etp">
       <col data-offer-col="pub_date">
       <col data-offer-col="ktru">
       <col data-offer-col="position">
@@ -77,6 +95,7 @@
     <thead>
       <tr>
         <th data-offer-col="purchase">Закупка</th>
+        <th data-offer-col="etp">Площадка</th>
         <th data-offer-col="pub_date">RSS pubDate</th>
         <th data-offer-col="ktru">КТРУ</th>
         <th data-offer-col="position">Позиция</th>
@@ -97,6 +116,7 @@
         <td data-offer-col="purchase">
           {% if row.source_url %}<a href="{{ row.source_url }}" target="_blank" rel="noopener"><code>{{ row.purchase_number }}</code></a>{% else %}<code>{{ row.purchase_number }}</code>{% endif %}
         </td>
+        <td data-offer-col="etp">{{ row.etp_name or '—' }}</td>
         <td data-offer-col="pub_date">{{ row.pub_display_msk or '—' }}</td>
         <td data-offer-col="ktru"><code>{{ row.ktru_code or '—' }}</code></td>
         <td data-offer-col="position">
@@ -140,6 +160,13 @@
                     data-line-key="{{ row.line_key }}"
                     title="Открыть подбор"
                     aria-label="Открыть подбор">↗</button>
+            <button type="button"
+                    class="offer-row-publish"
+                    data-purchase-number="{{ row.purchase_number }}"
+                    data-line-key="{{ row.line_key }}"
+                    {% if not row.can_participate %}disabled data-blocked="1"{% endif %}
+                    title="{% if row.can_participate %}Создать и опубликовать ПП на РТС (creation-data → temporary → подпись){% else %}{{ row.participate_reason or 'Участие недоступно' }}{% endif %}"
+                    aria-label="Создать и опубликовать ПП">ПП</button>
             <a class="button secondary offer-create-preoffer"
                href="{{ request.url_for('page_preoffers') }}?from_purchase={{ row.purchase_number }}&line_key={{ row.line_key }}"
                title="Создать предложение из закупки"
@@ -153,7 +180,7 @@
               <input type="hidden" name="purchase_number" value="{{ row.purchase_number }}">
               <input type="hidden" name="source_url" value="{{ row.source_url or '' }}">
               <input type="hidden" name="return_to" value="{{ html_return_to }}">
-              <button type="submit" title="Загрузить HTML карточку" aria-label="Загрузить HTML карточку">⇩</button>
+              <button type="submit" class="offer-load-card" title="Загрузить карточку ЕИС" aria-label="Загрузить карточку">Загрузить карточку</button>
             </form>
           {% endif %}
         </td>
@@ -230,7 +257,7 @@
     { id: "notice_sum", label: "Сумма в извещении", width: 130 },
     { id: "procedure_status", label: "Статус процедуры", width: 200 },
     { id: "profitability", label: "Рентабельность", width: 130 },
-    { id: "actions", label: "Действие", width: 95, required: true }
+    { id: "actions", label: "Действие", width: 150, required: true }
   ].filter(function (col) {
     return participationPriceOrdEnabled || col.id !== "profitability";
   });
@@ -399,6 +426,130 @@
     participateStatus.hidden = false;
     participateStatus.className = "offer-participate-status" + (kind ? " offer-participate-status--" + kind : "");
     participateStatus.innerHTML = html;
+  }
+
+  function setRowPublishStatus(html, kind) {
+    var el = document.getElementById("offer-row-publish-status");
+    if (!el) return;
+    if (!html) {
+      el.hidden = true;
+      el.innerHTML = "";
+      el.className = "offer-participate-status offer-row-publish-status";
+      return;
+    }
+    el.hidden = false;
+    el.className = "offer-participate-status offer-row-publish-status"
+      + (kind ? " offer-participate-status--" + kind : "");
+    el.innerHTML = html;
+    try { el.scrollIntoView({ block: "nearest", behavior: "smooth" }); } catch (e) { /* ignore */ }
+  }
+
+  /**
+   * Create Temporary PP from EIS notice (RTS creation-data) then publish via CryptoPro.
+   * onStatus(html, kind) — kind: pending|ok|warn|err
+   * Returns Promise resolving to draft API payload.
+   * Retries up to 3 times on creation_data_empty / RTS-not-ready (2/5/10 s).
+   */
+  function runNoticeCreatePublishPipe(pn, lk, onStatus) {
+    var status = typeof onStatus === "function" ? onStatus : function () {};
+    var retryDelays = [2000, 5000, 10000];
+    var attempt = 0;
+
+    function detailMessage(data, resp) {
+      var detail = data && data.detail != null ? data.detail : ("HTTP " + resp.status);
+      if (detail && typeof detail === "object") {
+        return String(detail.message || detail.detail || JSON.stringify(detail));
+      }
+      return typeof detail === "string" ? detail : JSON.stringify(detail);
+    }
+
+    function detailReason(data) {
+      var detail = data && data.detail;
+      if (detail && typeof detail === "object" && detail.reason) {
+        return String(detail.reason);
+      }
+      return "";
+    }
+
+    function isCreationDataEmpty(msg, reason) {
+      if (reason === "creation_data_empty") return true;
+      return /creation-data|HTTP 204|ещё не готов|еще не готов/i.test(String(msg || ""));
+    }
+
+    function createOnce() {
+      status("Создание предложения ПП в РТС (creation-data)…", "pending");
+      return fetch("/api/rts/pp/draft-from-notice", {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ purchase_number: pn, line_key: lk })
+      }).then(function (resp) {
+        return resp.json().then(function (data) {
+          if (!resp.ok) {
+            var msg = detailMessage(data, resp);
+            var reason = detailReason(data);
+            var err = new Error(msg);
+            err.reason = reason;
+            err.retryable = isCreationDataEmpty(msg, reason);
+            throw err;
+          }
+          return data;
+        });
+      });
+    }
+
+    function createWithRetry() {
+      return createOnce().catch(function (err) {
+        if (err && err.retryable && attempt < retryDelays.length) {
+          var waitMs = retryDelays[attempt];
+          attempt += 1;
+          status(
+            "РТС ещё не готов, повтор через " + Math.round(waitMs / 1000) + " с… (" + attempt + "/" + retryDelays.length + ")",
+            "pending"
+          );
+          return new Promise(function (resolve) { setTimeout(resolve, waitMs); })
+            .then(createWithRetry);
+        }
+        throw err;
+      });
+    }
+
+    return createWithRetry()
+      .then(function (data) {
+        var draftHtml = "Черновик ПП создан (id " + (data.rts_draft_id || "—") + "). ";
+        if (data.edit_url) {
+          draftHtml += '<a href="' + data.edit_url + '" target="_blank" rel="noopener">Открыть в РТС</a>';
+        }
+        status(draftHtml, data.protected_id ? "ok" : "warn");
+        if (window.__PP_PUBLISH_ENABLED && data.rts_draft_id && window.RtsPpPublish) {
+          status("Черновик создан. Готовим публикацию…", "pending");
+          return window.RtsPpPublish.run({
+            rtsDraftId: data.rts_draft_id,
+            source: "notice",
+            sourceKey: pn + "|" + lk,
+            onStatus: function (msg, kind) {
+              var mapped = kind === "error" ? "err" : (kind === "ok" ? "ok" : "pending");
+              status(msg, mapped);
+            }
+          }).then(function () { return data; }).catch(function () { return data; });
+        }
+        return data;
+      });
+  }
+
+  function formatParticipatePipeError(err) {
+    var msg = String(err && err.message ? err.message : err);
+    var reason = err && err.reason ? String(err.reason) : "";
+    var extra = "";
+    if (reason === "creation_data_empty" || /creation-data|HTTP 204|ещё не готов|еще не готов/i.test(msg)) {
+      extra = " РТС не отдал creation-data после повторов (позиция ещё недоступна или неверный star).";
+    } else if (reason === "star_mismatch" || /star_mismatch|не совпадает/i.test(msg)) {
+      extra = " Позиция/star не найдена после probe.";
+    } else if (/справочнике ртс|ktru\/search|импортируйте json/i.test(msg)) {
+      extra = ' <a href="/session">Сессия / КТРУ</a>';
+    } else if (/cookie|сесс/i.test(msg)) {
+      extra = ' <a href="/session">Обновить cookie</a>';
+    }
+    return "Ошибка: " + msg + extra;
   }
 
   function showParticipateDraft(draft) {
@@ -897,7 +1048,7 @@
     participateBtn.className = "offer-participate-btn";
     participateBtn.id = "offer-participate-btn";
     participateBtn.hidden = true;
-    participateBtn.innerHTML = "<span class=\"offer-participate-btn__label\">Участвовать</span><span class=\"offer-participate-btn__hint\">Создание черновика ПП на РТС</span>";
+    participateBtn.innerHTML = "<span class=\"offer-participate-btn__label\">Участвовать</span><span class=\"offer-participate-btn__hint\">Создание и публикация ПП через РТС</span>";
   }
   if (participateBtn) {
     participateBtn.addEventListener("click", function () {
@@ -907,21 +1058,7 @@
       if (!pn || !lk) return;
       participateBusy = true;
       participateBtn.disabled = true;
-      setParticipateStatus("Создание черновика ПП в РТС…", "pending");
-      fetch("/api/rts/pp/draft-from-notice", {
-        method: "POST",
-        headers: { "Accept": "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ purchase_number: pn, line_key: lk })
-      })
-        .then(function (resp) {
-          return resp.json().then(function (data) {
-            if (!resp.ok) {
-              var detail = data && data.detail ? data.detail : ("HTTP " + resp.status);
-              throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-            }
-            return data;
-          });
-        })
+      runNoticeCreatePublishPipe(pn, lk, setParticipateStatus)
         .then(function (data) {
           participateBusy = false;
           showParticipateDraft({
@@ -941,33 +1078,47 @@
           if (data.verify_report) {
             showDraftVerifyReport(data.verify_report, pn, lk);
           }
-          if (window.__PP_PUBLISH_ENABLED && data.rts_draft_id && window.RtsPpPublish) {
-            setParticipateStatus("Черновик создан. Готовим публикацию…", "pending");
-            window.RtsPpPublish.run({
-              rtsDraftId: data.rts_draft_id,
-              source: "notice",
-              sourceKey: pn + "|" + lk,
-              onStatus: function (msg, kind) {
-                var mapped = kind === "error" ? "err" : (kind === "ok" ? "ok" : "pending");
-                setParticipateStatus(msg, mapped);
-              }
-            }).catch(function () { /* status already set */ });
-          }
         })
         .catch(function (err) {
           participateBusy = false;
           if (participateBtn) participateBtn.disabled = false;
-          var msg = String(err && err.message ? err.message : err);
-          var extra = "";
-          if (/справочнике ртс|ktru\/search|импортируйте json/i.test(msg)) {
-            extra = ' <a href="/session">Импорт Ktru/search</a>';
-          } else if (/cookie|сесс/i.test(msg)) {
-            extra = ' <a href="/session">Обновить cookie</a>';
-          }
-          setParticipateStatus("Ошибка: " + msg + extra, "err");
+          setParticipateStatus(formatParticipatePipeError(err), "err");
         });
     });
   }
+
+  var rowPublishBusy = false;
+  function setRowPublishButtonsBusy(busy) {
+    document.querySelectorAll(".offer-row-publish").forEach(function (b) {
+      if (busy) {
+        b.disabled = true;
+      } else if (b.getAttribute("data-blocked") === "1") {
+        b.disabled = true;
+      } else {
+        b.disabled = false;
+      }
+    });
+  }
+  document.querySelectorAll(".offer-row-publish").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      if (rowPublishBusy || btn.disabled || btn.getAttribute("data-blocked") === "1") return;
+      var pn = (btn.getAttribute("data-purchase-number") || "").trim();
+      var lk = (btn.getAttribute("data-line-key") || "").trim();
+      if (!pn || !lk) return;
+      rowPublishBusy = true;
+      setRowPublishButtonsBusy(true);
+      runNoticeCreatePublishPipe(pn, lk, setRowPublishStatus)
+        .then(function () {
+          rowPublishBusy = false;
+          setRowPublishButtonsBusy(false);
+        })
+        .catch(function (err) {
+          rowPublishBusy = false;
+          setRowPublishButtonsBusy(false);
+          setRowPublishStatus(formatParticipatePipeError(err), "err");
+        });
+    });
+  });
 
   document.querySelectorAll(".offer-open-modal").forEach(function (btn) {
     btn.addEventListener("click", function () {
@@ -986,6 +1137,42 @@
     if (!pn || !lk) return;
     openCompareModal(pn, lk);
   })();
+
+  (function offerMatchingAutoRefresh() {
+    var REFRESH_MS = 20000;
+    var modal = document.getElementById("offer-modal");
+    var lastFingerprint = "";
+    var params = new URLSearchParams(window.location.search);
+    var qs = params.toString();
+    var apiUrl = "/api/offer-matching/rows" + (qs ? "?" + qs : "");
+
+    function modalOpen() {
+      return !!(modal && !modal.hasAttribute("hidden"));
+    }
+
+    function tick() {
+      if (document.hidden || modalOpen()) return;
+      fetch(apiUrl, { headers: { Accept: "application/json" }, credentials: "same-origin" })
+        .then(function (resp) {
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          return resp.json();
+        })
+        .then(function (data) {
+          if (!data || !data.ok || !data.fingerprint) return;
+          if (!lastFingerprint) {
+            lastFingerprint = data.fingerprint;
+            return;
+          }
+          if (data.fingerprint !== lastFingerprint) {
+            window.location.reload();
+          }
+        })
+        .catch(function () {});
+    }
+
+    tick();
+    setInterval(tick, REFRESH_MS);
+  })();
 })();
 </script>
 {% endblock %}
@@ -993,6 +1180,6 @@
 {% if pp_publish_enabled %}
 <script>window.__PP_PUBLISH_ENABLED = true;</script>
 <script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
-<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=1"></script>
+<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=8"></script>
 {% endif %}
 {% endblock %}

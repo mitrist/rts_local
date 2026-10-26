@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RTS Cookie Bridge",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Отправка cookie *.rts-tender.ru в сервис rts_tender",
   "permissions": ["cookies", "storage", "tabs", "alarms"],
   "host_permissions": [

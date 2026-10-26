@@ -33,6 +33,30 @@ def test_load_legacy_two_column_csv(tmp_path: Path):
     assert rows[0].ktru_code == ""
 
 
+def test_default_country_origin_path_prefers_project_root(tmp_path: Path, monkeypatch):
+    from ktru_country_origin import default_country_origin_path
+
+    monkeypatch.delenv("RTS_KTRU_COUNTRY_FILE", raising=False)
+    root_csv = tmp_path / "country_origin.csv"
+    root_csv.write_text(
+        "position_display_name;Столбец1\nМФУ;Китайская Народная Республика\n",
+        encoding="utf-8",
+    )
+    legacy = tmp_path / "КТРУ для ПП" / "Country_of_origin" / "country_origin.csv"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(
+        "position_display_name;Столбец1\nДиван;Российская Федерация\n",
+        encoding="utf-8",
+    )
+    assert default_country_origin_path(tmp_path) == root_csv.resolve()
+
+    root_csv.unlink()
+    assert default_country_origin_path(tmp_path) == legacy.resolve()
+
+    legacy.unlink()
+    assert default_country_origin_path(tmp_path) == (tmp_path / "country_origin.csv").resolve()
+
+
 def test_save_and_reload_full_format(tmp_path: Path):
     path = tmp_path / "country_origin.csv"
     save_country_origin_rows(
@@ -166,6 +190,7 @@ def test_apply_country_to_draft_item_china():
         ],
     }
     apply_country_to_draft_item(item, CountryOfOrigin("156", "Китайская Народная Республика"))
-    assert item["countriesOfOrigin"] == [{"code": "156", "name": "Китайская Народная Республика"}]
+    assert item["countriesOfOrigin"][0]["code"] == "156"
+    assert item["countriesOfOrigin"][0]["category"] == "Undefined"
     assert item["nationalModeInfoGroups"] == []
     assert item["softwareNationalModeInfoGroups"] == []

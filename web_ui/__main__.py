@@ -2,6 +2,10 @@
 
 import os
 
+from web_ui.os_trust import install_os_trust_store
+
+install_os_trust_store()
+
 import uvicorn
 
 _DEFAULT_PORT = 8765

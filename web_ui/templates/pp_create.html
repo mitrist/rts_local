@@ -1,0 +1,456 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Создать ПП</h2>
+<p class="hint">
+  Черновик из справочника КТРУ: характеристики шаблона, страна РФ, «Нет в реестре», регионы из дампа ОКТМО.
+  Количество задаёте по каждому региону. Срок поставки для всех — 20–40 дней, НДС 22%.
+  <a href="{{ request.url_for('page_pp_drafts') }}">К списку черновиков</a>
+</p>
+
+<div id="pp-create-flash" class="msg err" hidden></div>
+<div id="pp-create-ok" class="msg ok" hidden></div>
+
+<section class="card pp-create-step" data-step="1" id="pp-step-name">
+  <h3 class="pp-create-step-title">1. Наименование КТРУ</h3>
+  <div class="pp-create-step-body">
+    <label>
+      Поиск по имени
+      <div class="pp-create-search-wrap">
+        <input type="text" id="pp-ktru-name" autocomplete="off" placeholder="Стул на металлическом каркасе">
+        <ul id="pp-ktru-suggest" class="pp-create-suggest" hidden></ul>
+      </div>
+    </label>
+    <p class="hint" id="pp-ktru-name-hint"></p>
+    <div class="pp-create-actions">
+      <button type="button" class="button" id="pp-next-name">Далее</button>
+    </div>
+  </div>
+</section>
+
+<section class="card pp-create-step" data-step="2" id="pp-step-code">
+  <h3 class="pp-create-step-title">2. Код КТРУ</h3>
+  <div class="pp-create-step-body">
+    <label>
+      Код
+      <input type="text" id="pp-ktru-code" autocomplete="off" placeholder="31.01.11.150-00000003">
+    </label>
+    <dl class="pp-create-meta" id="pp-ktru-meta" hidden>
+      <div><dt>Наименование</dt><dd id="pp-meta-name">—</dd></div>
+      <div><dt>Версия</dt><dd id="pp-meta-version">—</dd></div>
+      <div><dt>ОКЕИ</dt><dd id="pp-meta-unit">—</dd></div>
+    </dl>
+    <div class="pp-create-actions">
+      <button type="button" class="button" id="pp-load-template">Загрузить шаблон</button>
+      <button type="button" class="button" id="pp-next-code">Далее</button>
+    </div>
+  </div>
+</section>
+
+<section class="card pp-create-step" data-step="3" id="pp-step-chars">
+  <h3 class="pp-create-step-title">3. Характеристики</h3>
+  <div class="pp-create-step-body">
+    <div id="pp-chars" class="pp-create-chars"><p class="hint">Сначала загрузите шаблон КТРУ.</p></div>
+    <div class="pp-create-actions">
+      <button type="button" class="button" id="pp-next-chars">Далее</button>
+    </div>
+  </div>
+</section>
+
+<section class="card pp-create-step" data-step="4" id="pp-step-country">
+  <h3 class="pp-create-step-title">4. Страна и реестр</h3>
+  <div class="pp-create-step-body">
+    <p>Страна происхождения: <strong>Россия</strong> <code>643</code> — не редактируется.</p>
+    <label class="checkbox-row">
+      <input type="checkbox" checked disabled>
+      <span>Нет в реестре</span>
+    </label>
+    <div class="pp-create-actions">
+      <button type="button" class="button" id="pp-next-country">Далее</button>
+    </div>
+  </div>
+</section>
+
+<section class="card pp-create-step" data-step="5" id="pp-step-regions">
+  <h3 class="pp-create-step-title">5. Регионы, цена и количество</h3>
+  <div class="pp-create-step-body">
+    <p class="hint">Срок поставки для всех регионов: 20–40 дней.</p>
+    <div class="pp-create-regions-toolbar">
+      <button type="button" class="button secondary" id="pp-regions-all">Все</button>
+      <button type="button" class="button secondary" id="pp-regions-none">Снять</button>
+      <input type="text" id="pp-regions-fill-price" placeholder="Цена, напр. 4500">
+      <button type="button" class="button secondary" id="pp-regions-fill">Проставить цену</button>
+      <input type="text" id="pp-regions-fill-qty" placeholder="Кол-во, напр. 10">
+      <button type="button" class="button secondary" id="pp-regions-fill-qty-btn">Проставить количество</button>
+    </div>
+    <div class="pp-create-regions-table">
+      <table class="eis-table">
+        <thead>
+          <tr><th></th><th>Субъект</th><th>ОКТМО</th><th>Цена за шт.</th><th>Количество</th></tr>
+        </thead>
+        <tbody id="pp-regions-body">
+          <tr><td colspan="5" class="hint">Загрузка справочника ОКТМО…</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="pp-create-actions">
+      <button type="button" class="button" id="pp-next-regions">Далее</button>
+    </div>
+  </div>
+</section>
+
+<section class="card pp-create-step" data-step="6" id="pp-step-preview">
+  <h3 class="pp-create-step-title">6. Превью и создание</h3>
+  <div class="pp-create-step-body pp-create-preview">
+    <dl>
+      <dt>КТРУ</dt><dd id="pp-preview-ktru">—</dd>
+      <dt>Характеристики</dt><dd id="pp-preview-chars">—</dd>
+      <dt>Страна</dt><dd>Россия (643), нет в реестре</dd>
+      <dt>Регионы</dt><dd id="pp-preview-regions">—</dd>
+    </dl>
+    <div class="pp-create-actions">
+      <button type="button" class="button" id="pp-create-draft">Создать черновик</button>
+      {% if pp_publish_enabled %}
+      <button type="button" class="button" id="pp-publish-draft" disabled>Опубликовать</button>
+      {% endif %}
+    </div>
+    <p class="hint" id="pp-create-status"></p>
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+{% if pp_publish_enabled %}
+<script>window.__PP_PUBLISH_ENABLED = true;</script>
+<script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
+<script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=8"></script>
+{% endif %}
+<script>
+(function () {
+  var state = {
+    template: null,
+    draftId: null,
+    sourceKey: "",
+    regions: []
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function showErr(msg) {
+    var el = $("pp-create-flash");
+    el.hidden = !msg;
+    el.textContent = msg || "";
+  }
+  function showOk(msg) {
+    var el = $("pp-create-ok");
+    el.hidden = !msg;
+    el.textContent = msg || "";
+  }
+  function jsonError(data, status) {
+    if (!data) return "HTTP " + status;
+    if (typeof data.detail === "string") return data.detail;
+    if (data.detail && data.detail.message) return data.detail.message;
+    return JSON.stringify(data.detail || data);
+  }
+  function fetchJson(url, opts) {
+    return fetch(url, opts).then(function (resp) {
+      return resp.json().then(function (data) {
+        if (!resp.ok) throw new Error(jsonError(data, resp.status));
+        return data;
+      }, function () {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return {};
+      });
+    });
+  }
+  function selectedChars() {
+    var out = [];
+    document.querySelectorAll("#pp-chars select[data-char-code]").forEach(function (sel) {
+      var code = sel.getAttribute("data-char-code") || "";
+      var value = (sel.value || "").trim();
+      if (code && value) out.push({ code: code, value_code: value });
+    });
+    return out;
+  }
+  function selectedRegions() {
+    var rows = [];
+    document.querySelectorAll("#pp-regions-body tr").forEach(function (tr) {
+      var cb = tr.querySelector("input[type='checkbox']");
+      var price = tr.querySelector("input[data-field='price']");
+      var qty = tr.querySelector("input[data-field='qty']");
+      if (!cb || !cb.checked || !price || !qty) return;
+      rows.push({
+        code: cb.getAttribute("data-code") || "",
+        unit_price: price.value,
+        quantity: qty.value
+      });
+    });
+    return rows;
+  }
+  function charLabel(ch) {
+    if (ch.locked) return ch.name + ": " + (ch.label || "—");
+    var sel = document.querySelector('#pp-chars select[data-char-code="' + ch.code + '"]');
+    if (!sel || !sel.value) return null;
+    var opt = sel.options[sel.selectedIndex];
+    return ch.name + ": " + (opt ? opt.textContent : sel.value);
+  }
+  function renderPreview() {
+    var tpl = state.template;
+    $("pp-preview-ktru").textContent = tpl
+      ? ((tpl.code || "") + " — " + (tpl.name || "") + (tpl.version != null ? ", v" + tpl.version : ""))
+      : "—";
+    var lines = [];
+    if (tpl && tpl.characteristics) {
+      tpl.characteristics.forEach(function (ch) {
+        var line = charLabel(ch);
+        if (line) lines.push(line);
+      });
+    }
+    $("pp-preview-chars").textContent = lines.length ? lines.join("; ") : "только неизменяемые / не выбрано";
+    var regs = selectedRegions();
+    $("pp-preview-regions").textContent = regs.length
+      ? regs.map(function (r) { return r.code + " / " + r.unit_price + " / " + r.quantity + " шт."; }).join("; ")
+      : "не выбраны";
+  }
+  function renderChars(tpl) {
+    var box = $("pp-chars");
+    box.innerHTML = "";
+    (tpl.characteristics || []).forEach(function (ch) {
+      var row = document.createElement("div");
+      row.className = "pp-create-char-row";
+      var lab = document.createElement("label");
+      var span = document.createElement("span");
+      span.textContent = ch.name + (ch.is_required ? " (обяз.)" : "") + (ch.locked ? " — неизменяемая" : "");
+      lab.appendChild(span);
+      if (ch.locked) {
+        var inp = document.createElement("input");
+        inp.type = "text";
+        inp.value = ch.label || "";
+        inp.disabled = true;
+        lab.appendChild(inp);
+      } else {
+        var sel = document.createElement("select");
+        sel.setAttribute("data-char-code", ch.code);
+        var empty = document.createElement("option");
+        empty.value = "";
+        empty.textContent = "— не указывать —";
+        sel.appendChild(empty);
+        (ch.options || []).forEach(function (opt) {
+          var o = document.createElement("option");
+          o.value = opt.value_code || String(opt.id || "");
+          o.textContent = opt.label || o.value;
+          sel.appendChild(o);
+        });
+        lab.appendChild(sel);
+      }
+      row.appendChild(lab);
+      box.appendChild(row);
+    });
+  }
+  function renderRegions(items) {
+    state.regions = items || [];
+    var body = $("pp-regions-body");
+    body.innerHTML = "";
+    if (!state.regions.length) {
+      body.innerHTML = "<tr><td colspan='5' class='hint'>Справочник ОКТМО пуст.</td></tr>";
+      return;
+    }
+    state.regions.forEach(function (row) {
+      var tr = document.createElement("tr");
+      var tdCb = document.createElement("td");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.setAttribute("data-code", row.code);
+      tdCb.appendChild(cb);
+      var tdName = document.createElement("td");
+      tdName.textContent = row.name || "";
+      var tdCode = document.createElement("td");
+      var codeEl = document.createElement("code");
+      codeEl.textContent = row.code || "";
+      tdCode.appendChild(codeEl);
+      var tdPrice = document.createElement("td");
+      var price = document.createElement("input");
+      price.type = "text";
+      price.setAttribute("data-field", "price");
+      price.placeholder = "0,00";
+      var tdQty = document.createElement("td");
+      var qty = document.createElement("input");
+      qty.type = "text";
+      qty.setAttribute("data-field", "qty");
+      qty.placeholder = "шт.";
+      function maybeCheck() {
+        if ((price.value || "").trim() || (qty.value || "").trim()) cb.checked = true;
+      }
+      price.addEventListener("input", maybeCheck);
+      qty.addEventListener("input", maybeCheck);
+      tdPrice.appendChild(price);
+      tdQty.appendChild(qty);
+      tr.appendChild(tdCb);
+      tr.appendChild(tdName);
+      tr.appendChild(tdCode);
+      tr.appendChild(tdPrice);
+      tr.appendChild(tdQty);
+      body.appendChild(tr);
+    });
+  }
+  function applyTemplate(tpl) {
+    state.template = tpl;
+    $("pp-ktru-code").value = tpl.code || "";
+    $("pp-ktru-name").value = tpl.name || $("pp-ktru-name").value;
+    $("pp-ktru-meta").hidden = false;
+    $("pp-meta-name").textContent = tpl.name || "—";
+    $("pp-meta-version").textContent = tpl.version != null ? String(tpl.version) : "—";
+    $("pp-meta-unit").textContent = tpl.unit
+      ? ((tpl.unit.name || "") + (tpl.unit.code ? " / " + tpl.unit.code : ""))
+      : "—";
+    renderChars(tpl);
+    renderPreview();
+  }
+  function loadTemplate(code) {
+    showErr("");
+    return fetchJson("/api/rts/ktru/template?code=" + encodeURIComponent(code)).then(function (data) {
+      applyTemplate(data.template);
+    });
+  }
+
+  var searchTimer = null;
+  $("pp-ktru-name").addEventListener("input", function () {
+    var q = ($("pp-ktru-name").value || "").trim();
+    clearTimeout(searchTimer);
+    if (q.length < 2) {
+      $("pp-ktru-suggest").hidden = true;
+      return;
+    }
+    searchTimer = setTimeout(function () {
+      fetchJson("/api/rts/ktru/search?q=" + encodeURIComponent(q)).then(function (data) {
+        var list = $("pp-ktru-suggest");
+        list.innerHTML = "";
+        (data.items || []).forEach(function (item) {
+          var li = document.createElement("li");
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.textContent = (item.name || "") + " (" + (item.code || "") + ")";
+          btn.addEventListener("click", function () {
+            $("pp-ktru-name").value = item.name || "";
+            $("pp-ktru-code").value = item.code || "";
+            list.hidden = true;
+            loadTemplate(item.code).catch(function (err) { showErr(err.message); });
+          });
+          li.appendChild(btn);
+          list.appendChild(li);
+        });
+        list.hidden = !list.children.length;
+        $("pp-ktru-name-hint").textContent = (data.items || []).length
+          ? ""
+          : "Ничего не найдено";
+      }).catch(function (err) {
+        $("pp-ktru-name-hint").textContent = err.message;
+      });
+    }, 280);
+  });
+
+  $("pp-load-template").addEventListener("click", function () {
+    var code = ($("pp-ktru-code").value || "").trim();
+    if (!code) { showErr("Укажите код КТРУ."); return; }
+    loadTemplate(code).then(function () { showErr(""); }).catch(function (err) { showErr(err.message); });
+  });
+  $("pp-next-name").addEventListener("click", function () {
+    if (!($("pp-ktru-code").value || "").trim() && !($("pp-ktru-name").value || "").trim()) {
+      showErr("Выберите КТРУ из поиска или введите код.");
+      return;
+    }
+    showErr("");
+    $("pp-ktru-code").focus();
+  });
+  $("pp-next-code").addEventListener("click", function () {
+    if (!state.template) { showErr("Загрузите шаблон по коду КТРУ."); return; }
+    showErr("");
+  });
+  $("pp-next-chars").addEventListener("click", function () { showErr(""); });
+  $("pp-next-country").addEventListener("click", function () { showErr(""); });
+  $("pp-next-regions").addEventListener("click", function () {
+    if (!selectedRegions().length) { showErr("Отметьте регион, укажите цену и количество больше 0."); return; }
+    showErr("");
+    renderPreview();
+  });
+
+  $("pp-regions-all").addEventListener("click", function () {
+    document.querySelectorAll("#pp-regions-body input[type='checkbox']").forEach(function (cb) { cb.checked = true; });
+  });
+  $("pp-regions-none").addEventListener("click", function () {
+    document.querySelectorAll("#pp-regions-body input[type='checkbox']").forEach(function (cb) { cb.checked = false; });
+  });
+  function fillChecked(field, value) {
+    document.querySelectorAll("#pp-regions-body tr").forEach(function (tr) {
+      var cb = tr.querySelector("input[type='checkbox']");
+      var inp = tr.querySelector("input[data-field='" + field + "']");
+      if (cb && cb.checked && inp) inp.value = value;
+    });
+  }
+  $("pp-regions-fill").addEventListener("click", function () {
+    fillChecked("price", ($("pp-regions-fill-price").value || "").trim());
+  });
+  $("pp-regions-fill-qty-btn").addEventListener("click", function () {
+    fillChecked("qty", ($("pp-regions-fill-qty").value || "").trim());
+  });
+
+  $("pp-create-draft").addEventListener("click", function () {
+    if (!state.template) { showErr("Сначала загрузите шаблон КТРУ."); return; }
+    var regions = selectedRegions();
+    if (!regions.length) { showErr("Отметьте регион, укажите цену и количество больше 0."); return; }
+    showErr("");
+    showOk("");
+    $("pp-create-status").textContent = "Создание черновика…";
+    $("pp-create-draft").disabled = true;
+    fetchJson("/api/rts/pp/draft-from-catalog", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ktru_code: state.template.code,
+        characteristics: selectedChars(),
+        regions: regions
+      })
+    }).then(function (data) {
+      state.draftId = data.rts_draft_id;
+      state.sourceKey = data.source_key || ("catalog:" + (data.line_key || ""));
+      $("pp-create-status").textContent = "Черновик " + data.rts_draft_id + " создан.";
+      showOk("Черновик создан. Можно опубликовать или открыть в списке.");
+      var pub = $("pp-publish-draft");
+      if (pub) pub.disabled = !data.rts_draft_id;
+    }).catch(function (err) {
+      showErr(err.message);
+      $("pp-create-status").textContent = "";
+    }).then(function () {
+      $("pp-create-draft").disabled = false;
+    });
+  });
+
+  var pubBtn = $("pp-publish-draft");
+  if (pubBtn) {
+    pubBtn.addEventListener("click", function () {
+      if (!window.RtsPpPublish || !state.draftId) {
+        window.alert("Нет черновика для публикации.");
+        return;
+      }
+      pubBtn.disabled = true;
+      window.RtsPpPublish.run({
+        rtsDraftId: state.draftId,
+        source: "catalog",
+        sourceKey: state.sourceKey,
+        forceNew: true,
+        statusEl: $("pp-create-status"),
+        onStatus: function (msg, kind) {
+          $("pp-create-status").textContent = msg || "";
+          if (kind === "error") showErr(msg);
+          if (kind === "ok") showOk(msg);
+        }
+      }).then(function () { pubBtn.disabled = false; })
+        .catch(function () { pubBtn.disabled = false; });
+    });
+  }
+
+  fetchJson("/api/rts/pp/oktmo-subjects").then(function (data) {
+    renderRegions(data.items || []);
+  }).catch(function (err) {
+    $("pp-regions-body").innerHTML = "<tr><td colspan='5' class='hint'>" + err.message + "</td></tr>";
+  });
+})();
+</script>
+{% endblock %}

@@ -156,6 +156,16 @@ def test_parse_notice_value_xml_greater_or_equal():
     assert parsed["minMathNotation"] == "ge"
 
 
+def test_parse_notice_value_xml_range_less_is_strict():
+    parsed = parse_notice_value(
+        "ОКЕИ Миллиметр greaterOrEqual мин 1200 less макс 1300 [тип 2] вид 3"
+    )
+    assert parsed["minValue"] == "1200"
+    assert parsed["minMathNotation"] == "ge"
+    assert parsed["maxValue"] == "1300"
+    assert parsed["maxMathNotation"] == "lt"
+
+
 def _parse_rts_num_local(value: object) -> float | None:
     from rts_pp_api import _parse_rts_num
 

@@ -5,6 +5,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import requests
 
 from rts_pp_application_api import (
     PRELIMINARY_OFFERS_PURCHASE,
@@ -227,3 +228,126 @@ def test_resolve_procedure_not_ezt_stops_early(monkeypatch):
 def test_search_by_notification_number_empty_raises():
     with pytest.raises(RtsPpApplicationApiError, match="notification_number"):
         search_by_notification_number(MagicMock(), "")
+
+
+def test_lk_origin_candidates_prefer_app(monkeypatch):
+    monkeypatch.delenv("RTS_APP_ORIGIN", raising=False)
+    from rts_pp_application_api import APP_ORIGIN, GOST_ORIGIN, lk_origin_candidates
+
+    assert lk_origin_candidates()[0] == APP_ORIGIN
+    assert GOST_ORIGIN in lk_origin_candidates()
+    monkeypatch.setenv("RTS_APP_ORIGIN", "https://app-gost.rts-tender.ru")
+    assert lk_origin_candidates() == ["https://app-gost.rts-tender.ru"]
+
+
+def test_is_waf_body_detects_anti_ddos():
+    from rts_pp_application_api import is_waf_body
+
+    html = "<!DOCTYPE html><html><head><title>Anti-DDoS защита</title></head></html>"
+    assert is_waf_body(html, 503) is True
+    assert is_waf_body('{"Success":true}', 200) is False
+
+
+def test_fetch_auction_search_uses_session_origin():
+    from rts_pp_application_api import GOST_ORIGIN, fetch_auction_search
+
+    session = MagicMock()
+    session.headers = {"Origin": GOST_ORIGIN}
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.url = GOST_ORIGIN + "/supplier/lk/api/auction/search"
+    resp.text = '{"Success":true,"Data":{"Data":[],"Count":0}}'
+    resp.json.return_value = {"Success": True, "Data": {"Data": [], "Count": 0}}
+    session.request.return_value = resp
+    rows, total = fetch_auction_search(session, {"ktruCode": "x"})
+    assert rows == []
+    assert total == 0
+    url = session.request.call_args.args[1]
+    assert url.startswith(GOST_ORIGIN)
+    assert url.endswith("/supplier/lk/api/auction/search")
+
+
+def test_request_json_short_waf_error(monkeypatch):
+    from rts_pp_application_api import GOST_ORIGIN, _request_json
+
+    monkeypatch.setattr("rts_pp_application_api.WAF_RETRY_ATTEMPTS", 1)
+    session = MagicMock()
+    resp = MagicMock()
+    resp.status_code = 503
+    resp.url = GOST_ORIGIN + "/supplier/lk/api/auction/search"
+    resp.text = "<!DOCTYPE html><html><title>Anti-DDoS защита</title></html>"
+    session.request.return_value = resp
+    with pytest.raises(RtsPpApplicationApiError, match="анти-DDoS") as exc:
+        _request_json(session, "POST", resp.url, json_body={})
+    assert exc.value.reason == "waf"
+    assert "DOCTYPE" not in str(exc.value)
+
+
+def test_open_lk_session_falls_back_from_waf(monkeypatch):
+    from rts_pp_application_api import APP_ORIGIN, GOST_ORIGIN, open_lk_session_for_ezt
+
+    calls: list[str] = []
+
+    def fake_search(session, ktru, **_kw):
+        origin = session.headers.get("Origin")
+        calls.append(origin)
+        if origin == APP_ORIGIN:
+            raise RtsPpApplicationApiError("waf app", reason="waf")
+        return [], 0
+
+    monkeypatch.delenv("RTS_APP_ORIGIN", raising=False)
+    monkeypatch.setattr("rts_pp_application_api.warmup_lk_session", lambda *_a, **_k: "ok")
+    monkeypatch.setattr("rts_pp_application_api.search_ezt_by_ktru", fake_search)
+    session, origin, rows, total = open_lk_session_for_ezt("Auth=1", probe_ktru="31.01.12.139-00000001")
+    assert origin == GOST_ORIGIN
+    assert rows == []
+    assert total == 0
+    assert calls == [APP_ORIGIN, GOST_ORIGIN]
+    assert session.headers["Origin"] == GOST_ORIGIN
+
+
+def test_open_lk_session_skips_network_warmup(monkeypatch):
+    from rts_pp_application_api import APP_ORIGIN, GOST_ORIGIN, open_lk_session_for_ezt
+
+    calls: list[str] = []
+
+    def fake_warm(session, timeout=8.0):
+        origin = session.headers.get("Origin")
+        return "network" if origin == APP_ORIGIN else "ok"
+
+    def fake_search(session, ktru, **_kw):
+        calls.append(session.headers.get("Origin"))
+        return [], 0
+
+    monkeypatch.delenv("RTS_APP_ORIGIN", raising=False)
+    monkeypatch.setattr("rts_pp_application_api.warmup_lk_session", fake_warm)
+    monkeypatch.setattr("rts_pp_application_api.search_ezt_by_ktru", fake_search)
+    _session, origin, rows, total = open_lk_session_for_ezt("Auth=1", probe_ktru="x")
+    assert origin == GOST_ORIGIN
+    assert calls == [GOST_ORIGIN]
+    assert rows == []
+    assert total == 0
+
+
+def test_request_json_connection_reset_is_network(monkeypatch):
+    from rts_pp_application_api import GOST_ORIGIN, _request_json
+
+    monkeypatch.setattr("rts_pp_application_api.WAF_RETRY_ATTEMPTS", 1)
+    session = MagicMock()
+    session.request.side_effect = requests.exceptions.ConnectionError(
+        ("Connection aborted.", ConnectionResetError(104, "Connection reset by peer"))
+    )
+    with pytest.raises(RtsPpApplicationApiError, match="Сеть РТС") as exc:
+        _request_json(session, "POST", GOST_ORIGIN + "/supplier/lk/api/auction/search")
+    assert exc.value.reason == "network"
+
+
+def test_supplier_session_puts_cookie_in_jar_not_header():
+    from rts_pp_application_api import GOST_ORIGIN, supplier_session
+
+    session = supplier_session(".Auth.Sso=abc; .Auth.Rts.P=def", origin=GOST_ORIGIN)
+    assert "Cookie" not in session.headers
+    assert session.headers["Origin"] == GOST_ORIGIN
+    names = {c.name for c in session.cookies}
+    assert ".Auth.Sso" in names
+    assert ".Auth.Rts.P" in names

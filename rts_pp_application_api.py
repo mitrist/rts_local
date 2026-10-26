@@ -11,10 +11,12 @@ RTS supplier LK API for ЭЗТ (Preliminary Offers Purchase, App504.aspx).
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import requests
 
@@ -32,6 +34,9 @@ PURCHASE_METHOD_TYPE_EZT = 108
 
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_AUCTION_PAGE_SIZE = 10
+WAF_RETRY_ATTEMPTS = 2
+APP_ORIGIN = "https://app.rts-tender.ru"
+GOST_ORIGIN = "https://app-gost.rts-tender.ru"
 
 DEFAULT_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -63,22 +68,121 @@ def load_supplier_cookie(path: Path) -> str:
     return cookie
 
 
-def supplier_headers(cookie: str, *, referer_page: str = DEFAULT_APP_REFERER) -> dict[str, str]:
-    return {
+ORIGIN_FALLBACK_REASONS = frozenset({"waf", "network"})
+
+
+def lk_origin_candidates(explicit: str | None = None) -> list[str]:
+    raw = str(explicit or os.environ.get("RTS_APP_ORIGIN") or "").strip().rstrip("/")
+    if raw:
+        return [raw]
+    # VM cannot complete TLS to app-gost (Connection reset). LK on app.* is behind Anti-DDoS JS.
+    return [APP_ORIGIN, GOST_ORIGIN]
+
+
+def is_hard_disconnect(exc: BaseException) -> bool:
+    text = str(exc).lower()
+    if "connection reset" in text or "connection aborted" in text:
+        return True
+    if "ssl" in text and ("eof" in text or "reset" in text or "wrong version" in text):
+        return True
+    return isinstance(exc, (requests.exceptions.SSLError, ConnectionResetError))
+
+
+def is_origin_fallback_error(exc: RtsPpApplicationApiError) -> bool:
+    return exc.reason in ORIGIN_FALLBACK_REASONS
+
+
+def session_lk_origin(session: requests.Session) -> str:
+    return str(session.headers.get("Origin") or DEFAULT_ORIGIN).strip().rstrip("/") or DEFAULT_ORIGIN
+
+
+def apply_cookie_header(session: requests.Session, cookie: str) -> None:
+    """Put operator Cookie into the jar so WAF Set-Cookie from warmup can merge."""
+    for part in str(cookie or "").split(";"):
+        piece = part.strip()
+        if not piece or "=" not in piece:
+            continue
+        name, value = piece.split("=", 1)
+        name, value = name.strip(), value.strip()
+        if name:
+            session.cookies.set(name, value)
+
+
+def is_waf_body(text: str, status_code: int) -> bool:
+    if int(status_code or 0) not in (403, 429, 502, 503, 520):
+        return False
+    low = (text or "")[:4000].lower()
+    return "anti-ddos" in low or "qrator" in low or "<!doctype html" in low or "<html" in low
+
+
+def supplier_headers(
+    cookie: str = "",
+    *,
+    referer_page: str = DEFAULT_APP_REFERER,
+    origin: str | None = None,
+) -> dict[str, str]:
+    host = str(origin or DEFAULT_ORIGIN).strip().rstrip("/") or DEFAULT_ORIGIN
+    headers = {
         "Accept": "application/json, text/plain, */*",
+        "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
         "Content-Type": "application/json;charset=UTF-8",
-        "Cookie": cookie.strip(),
-        "Origin": DEFAULT_ORIGIN,
-        "Referer": f"{DEFAULT_ORIGIN}/supplier/lk/{referer_page}",
+        "Origin": host,
+        "Referer": f"{host}/supplier/lk/{referer_page}",
         "User-Agent": DEFAULT_UA,
         "X-Requested-With": "XMLHttpRequest",
+        "Sec-Fetch-Dest": "empty",
+        "Sec-Fetch-Mode": "cors",
+        "Sec-Fetch-Site": "same-origin",
     }
+    if str(cookie or "").strip():
+        headers["Cookie"] = cookie.strip()
+    return headers
 
 
-def supplier_session(cookie: str, *, referer_page: str = DEFAULT_APP_REFERER) -> requests.Session:
+def supplier_session(
+    cookie: str,
+    *,
+    referer_page: str = DEFAULT_APP_REFERER,
+    origin: str | None = None,
+) -> requests.Session:
     session = requests.Session()
-    session.headers.update(supplier_headers(cookie, referer_page=referer_page))
+    session.headers.update(supplier_headers("", referer_page=referer_page, origin=origin))
+    apply_cookie_header(session, cookie)
     return session
+
+
+def warmup_lk_session(session: requests.Session, timeout: float = 8.0) -> str:
+    """Return 'ok', 'waf', or 'network' after a cheap GET of App504.aspx."""
+    origin = session_lk_origin(session)
+    try:
+        resp = session.get(f"{origin}/supplier/lk/{DEFAULT_APP_REFERER}", timeout=timeout)
+    except requests.RequestException:
+        return "network"
+    if is_waf_body(resp.text or "", resp.status_code):
+        return "waf"
+    return "ok"
+
+
+def _api_error_from_response(resp: requests.Response, *, url: str) -> RtsPpApplicationApiError:
+    host = urlparse(str(resp.url or url)).netloc or urlparse(url).netloc
+    if is_waf_body(resp.text or "", resp.status_code):
+        return RtsPpApplicationApiError(
+            f"РТС анти-DDoS HTTP {resp.status_code} ({host}). "
+            "Опрос ЭЗТ идёт через app-gost; обновите cookie ЛК, если ошибка повторится.",
+            reason="waf",
+            detail={"http_status": resp.status_code, "host": host},
+        )
+    if resp.status_code in (401, 403):
+        return RtsPpApplicationApiError(
+            "Сессия поставщика РТС истекла. Обновите cookie.",
+            reason="session_expired",
+            detail={"http_status": resp.status_code, "host": host},
+        )
+    return RtsPpApplicationApiError(
+        f"РТС API {resp.status_code} ({host})",
+        reason="api_error",
+        detail={"http_status": resp.status_code, "host": host},
+    )
 
 
 def _str_or_none(value: object) -> str | None:
@@ -119,25 +223,43 @@ def _request_json(
     params: dict[str, str] | None = None,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> Any:
-    try:
-        resp = session.request(method, url, json=json_body, params=params, timeout=timeout)
-    except requests.RequestException as exc:
-        raise RtsPpApplicationApiError(f"Сеть РТС: {exc}", reason="api_error") from exc
-    if resp.status_code in (401, 403):
+    resp: requests.Response | None = None
+    last_exc: Exception | None = None
+    for attempt in range(1, WAF_RETRY_ATTEMPTS + 1):
+        try:
+            resp = session.request(method, url, json=json_body, params=params, timeout=timeout)
+        except requests.RequestException as exc:
+            last_exc = exc
+            host = urlparse(url).netloc
+            if is_hard_disconnect(exc) or attempt >= WAF_RETRY_ATTEMPTS:
+                raise RtsPpApplicationApiError(
+                    f"Сеть РТС ({host}): {exc}",
+                    reason="network",
+                    detail={"host": host},
+                ) from exc
+            time.sleep(1.5 * attempt)
+            continue
+        if resp.status_code == 200:
+            break
+        err = _api_error_from_response(resp, url=url)
+        if err.reason == "waf" and attempt < WAF_RETRY_ATTEMPTS:
+            time.sleep(1.5 * attempt)
+            continue
+        raise err
+    if resp is None:
+        host = urlparse(url).netloc
         raise RtsPpApplicationApiError(
-            "Сессия поставщика РТС истекла. Обновите cookie.",
-            reason="session_expired",
-            detail={"http_status": resp.status_code},
+            f"Сеть РТС ({host}): {last_exc}",
+            reason="network",
+            detail={"host": host},
         )
     if resp.status_code != 200:
-        raise RtsPpApplicationApiError(
-            f"РТС API {resp.status_code}: {(resp.text or '')[:500]}",
-            reason="api_error",
-            detail={"http_status": resp.status_code},
-        )
+        raise _api_error_from_response(resp, url=url)
     try:
         return resp.json()
     except ValueError as exc:
+        if is_waf_body(resp.text or "", resp.status_code):
+            raise _api_error_from_response(resp, url=url) from exc
         raise RtsPpApplicationApiError("РТС API вернул не-JSON.", reason="api_error") from exc
 
 
@@ -147,6 +269,9 @@ def build_auction_search_payload(
     ktru_code: str | None = None,
     page_number: int = 1,
     page_size: int = DEFAULT_AUCTION_PAGE_SIZE,
+    aggregate_procedure_types: list[str] | None = None,
+    publication_from: str | None = None,
+    publication_to: str | None = None,
 ) -> dict[str, Any]:
     return {
         "notificationNumber": notification_number,
@@ -166,10 +291,10 @@ def build_auction_search_payload(
         "startPriceMin": "",
         "startPriceMax": "",
         "favorite": None,
-        "publicationDate": {"from": None, "to": None},
+        "publicationDate": {"from": publication_from, "to": publication_to},
         "applicationEndDate": {"from": None, "to": None},
         "tradingDate": {"from": None, "to": None},
-        "aggregateProcedureTypes": None,
+        "aggregateProcedureTypes": aggregate_procedure_types,
         "aggregateCustomerLevels": [],
         "okpd2Codes": None,
         "ktruCode": ktru_code,
@@ -203,6 +328,7 @@ class AuctionSearchRow:
     has_applications: bool
     participant_has_active_application: bool
     active_application_id: str | None
+    publication_date: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -220,6 +346,7 @@ class AuctionSearchRow:
             "has_applications": self.has_applications,
             "participant_has_active_application": self.participant_has_active_application,
             "active_application_id": self.active_application_id,
+            "publication_date": self.publication_date,
         }
 
 
@@ -245,6 +372,7 @@ def parse_auction_search_row(raw: dict[str, Any]) -> AuctionSearchRow | None:
         has_applications=bool(raw.get("HasApplications")),
         participant_has_active_application=bool(raw.get("ParticipantHasActiveApplication")),
         active_application_id=_str_or_none(raw.get("ActiveApplicationId")),
+        publication_date=_str_or_none(raw.get("PublicationDateString")) or "",
     )
 
 
@@ -276,7 +404,7 @@ def fetch_auction_search(
     *,
     timeout: float = DEFAULT_TIMEOUT,
 ) -> tuple[list[AuctionSearchRow], int]:
-    url = DEFAULT_ORIGIN + AUCTION_SEARCH_PATH
+    url = session_lk_origin(session) + AUCTION_SEARCH_PATH
     data = _request_json(session, "POST", url, json_body=payload, timeout=timeout)
     if not isinstance(data, dict) or not data.get("Success", True):
         errors = data.get("Errors") if isinstance(data, dict) else None
@@ -303,6 +431,82 @@ def search_by_notification_number(
         if row.notification_number == number:
             return row
     return rows[0] if rows else None
+
+
+def search_ezt_by_ktru(
+    session: requests.Session,
+    ktru_code: str,
+    *,
+    publication_from: str | None = None,
+    page_size: int = 100,
+    timeout: float = DEFAULT_TIMEOUT,
+    max_pages: int = 50,
+) -> tuple[list[AuctionSearchRow], int]:
+    code = str(ktru_code or "").strip()
+    if not code:
+        raise RtsPpApplicationApiError("ktru_code не задан.", reason="api_error")
+    collected: list[AuctionSearchRow] = []
+    total = 0
+    size = max(1, min(int(page_size), 100))
+    pages = max(1, min(int(max_pages), 50))
+    for page in range(1, pages + 1):
+        payload = build_auction_search_payload(
+            ktru_code=code,
+            page_number=page,
+            page_size=size,
+            aggregate_procedure_types=[str(PURCHASE_METHOD_TYPE_EZT)],
+            publication_from=publication_from,
+        )
+        rows, total = fetch_auction_search(session, payload, timeout=timeout)
+        collected.extend(rows)
+        if not rows or len(collected) >= total:
+            break
+    return collected, total
+
+
+def open_lk_session_for_ezt(
+    cookie: str,
+    *,
+    probe_ktru: str,
+    publication_from: str | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+) -> tuple[requests.Session, str, list[AuctionSearchRow], int]:
+    """Try app.rts-tender.ru, then app-gost. Skip origin on WAF/TLS reset."""
+    attempts: list[str] = []
+    last_exc: RtsPpApplicationApiError | None = None
+    for origin in lk_origin_candidates():
+        host = urlparse(origin).netloc or origin
+        session = supplier_session(cookie, origin=origin)
+        warm = warmup_lk_session(session, timeout=min(timeout, 8.0))
+        if warm == "network":
+            attempts.append(f"{host}: нет TLS/соединения")
+            last_exc = RtsPpApplicationApiError(
+                f"Сеть РТС ({host}): соединение сброшено",
+                reason="network",
+                detail={"host": host},
+            )
+            continue
+        try:
+            rows, total = search_ezt_by_ktru(
+                session,
+                probe_ktru,
+                publication_from=publication_from,
+                timeout=timeout,
+            )
+            return session, origin, rows, total
+        except RtsPpApplicationApiError as exc:
+            last_exc = exc
+            attempts.append(f"{host}: {exc}")
+            if not is_origin_fallback_error(exc):
+                raise
+    detail = "; ".join(attempts) if attempts else "нет хостов"
+    raise RtsPpApplicationApiError(
+        "ЛК РТС с сервера недоступен "
+        f"({detail}). auction/search за Anti-DDoS, как Ktru/search. "
+        "Обновите RTS Cookie Bridge — опрос ЭЗТ идёт из браузера.",
+        reason=last_exc.reason if last_exc is not None else "waf",
+        detail={"attempts": attempts},
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -466,7 +670,7 @@ def fetch_procedure_model(
         "notificationNumber": notice,
         "revisionNumber": revision_number,
     }
-    url = DEFAULT_ORIGIN + PROCEDURE_MODEL_PATH
+    url = session_lk_origin(session) + PROCEDURE_MODEL_PATH
     data = _request_json(session, "GET", url, params=params, timeout=timeout)
     if not isinstance(data, dict):
         raise RtsPpApplicationApiError("procedure/model: ответ не объект.", reason="api_error")
@@ -542,7 +746,7 @@ def fetch_application_model(
     if not url_id:
         raise RtsPpApplicationApiError("application_url_id не задан.", reason="api_error")
     params = {"Id": url_id, "tradeLotId": str(trade_lot_url_id or "").strip()}
-    url = DEFAULT_ORIGIN + APPLICATION_MODEL_PATH
+    url = session_lk_origin(session) + APPLICATION_MODEL_PATH
     data = _request_json(session, "GET", url, params=params, timeout=timeout)
     if not isinstance(data, dict):
         raise RtsPpApplicationApiError("application/model: ответ не объект.", reason="api_error")
@@ -558,7 +762,7 @@ def fetch_trade_lot_requirements(
     ids = [str(x).strip() for x in url_trade_ids if str(x).strip()]
     if not ids:
         return []
-    url = DEFAULT_ORIGIN + TRADE_LOT_REQUIREMENTS_PATH
+    url = session_lk_origin(session) + TRADE_LOT_REQUIREMENTS_PATH
     data = _request_json(session, "POST", url, json_body={"tradeIds": ids}, timeout=timeout)
     if not isinstance(data, list):
         raise RtsPpApplicationApiError("trade-lot-requirements/search: ожидался массив.", reason="api_error")

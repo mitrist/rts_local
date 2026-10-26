@@ -16,7 +16,7 @@
       <div class="row">
         <div>
           <label for="rss_interval_sec">Интервал, сек</label>
-          <input type="number" name="rss_interval_sec" id="rss_interval_sec" value="{{ eis_rss_interval_sec }}" min="30" max="3600">
+          <input type="number" name="rss_interval_sec" id="rss_interval_sec" value="{{ eis_rss_interval_sec }}" min="20" max="3600">
         </div>
         <div>
           <label for="rss_query_label">Метка запроса</label>
@@ -48,6 +48,7 @@
   <table class="eis-table eis-rss-compare-table">
     <colgroup>
       <col class="rss-col-purchase">
+      <col class="rss-col-etp">
       <col class="rss-col-name">
       <col class="rss-col-trademark">
       <col class="rss-col-date">
@@ -60,11 +61,12 @@
     <thead>
       <tr>
         <th>Закупка</th>
+        <th>Площадка</th>
         <th>Наименование</th>
         <th>Товарный знак</th>
-        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="none" data-rss-sort-col="3" data-rss-sort-type="text">RSS pubDate <span class="eis-sort-ind" aria-hidden="true"></span></th>
-        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="none" data-rss-sort-col="4" data-rss-sort-type="text">RSS впервые увидел <span class="eis-sort-ind" aria-hidden="true"></span></th>
-        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="none" data-rss-sort-col="5" data-rss-sort-type="number">RSS задержка, сек <span class="eis-sort-ind" aria-hidden="true"></span></th>
+        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="none" data-rss-sort-col="4" data-rss-sort-type="text">RSS pubDate <span class="eis-sort-ind" aria-hidden="true"></span></th>
+        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="none" data-rss-sort-col="5" data-rss-sort-type="text">RSS впервые увидел <span class="eis-sort-ind" aria-hidden="true"></span></th>
+        <th class="eis-sortable-th" tabindex="0" role="columnheader" aria-sort="none" data-rss-sort-col="6" data-rss-sort-type="number">RSS задержка, сек <span class="eis-sort-ind" aria-hidden="true"></span></th>
         <th>Этап</th>
         <th>Заказчик</th>
         <th>Цена</th>
@@ -76,6 +78,7 @@
         <td>
           {% if row.link %}<a href="{{ row.link }}" target="_blank" rel="noopener"><code>{{ row.reg_number }}</code></a>{% else %}<code>{{ row.reg_number }}</code>{% endif %}
         </td>
+        <td>{{ row.etp_name or '—' }}</td>
         <td>{{ row.position_display_name or '—' }}</td>
         <td>{{ row.trade_mark or '—' }}</td>
         <td data-rss-sort="{{ row.rss_pub_date_utc or '' }}">{{ row.rss_pub_display_msk }}</td>
@@ -100,7 +103,7 @@
   var lastRunEl = document.getElementById("eis-rss-last-run");
   var nextPollTimerEl = document.getElementById("eis-rss-next-poll-timer");
   var emptyHint = document.getElementById("eis-rss-empty-hint");
-  var statusCheckIntervalSec = 3;
+  var statusCheckIntervalSec = 20;
   var statusCheckSecondsLeft = statusCheckIntervalSec;
   var pollSecondsLeft = null;
   var lastRunId = {% if eis_rss_last_run %}{{ eis_rss_last_run.id|default(0) }}{% else %}0{% endif %};
@@ -186,6 +189,7 @@
     }
     tr.appendChild(purchaseTd);
 
+    tr.appendChild(textCell(row.etp_name));
     tr.appendChild(textCell(row.position_display_name));
     tr.appendChild(textCell(row.trade_mark));
 
@@ -289,7 +293,7 @@
     renderTimers();
     if (statusCheckSecondsLeft <= 0) {
       statusCheckSecondsLeft = statusCheckIntervalSec;
-      refreshRssStatus();
+      refreshRssTable(true);
     }
   }, 1000);
   renderTimers();

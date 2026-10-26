@@ -3,7 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 
-from eis_rss_poll import parse_rss_items, rss_requests_verify, rss_url_with_cache_buster
+from eis_analytics_db import etp_name_from_rss_url
+from eis_rss_poll import parse_rss_items, rss_requests_verify, rss_url_for_ktru, rss_url_with_cache_buster
 
 
 def test_rss_requests_verify_env(monkeypatch):
@@ -47,3 +48,26 @@ def test_rss_url_with_cache_buster_preserves_filters_and_replaces_old_stamp():
     assert qs["morphology"] == ["on"]
     assert qs["gws"] == ["Выберите тип закупки"]
     assert qs["_rts_ts"] == ["12345"]
+
+
+def test_rss_url_for_ktru_adds_classifier_and_page_size():
+    url = (
+        "https://zakupki.gov.ru/epz/order/extendedsearch/rss.html?"
+        "morphology=on&placingWayList=EZT20%2CEZTP20&recordsPerPage=_10&searchString=old"
+    )
+    out = rss_url_for_ktru(url, "31.01.11.150-00000021")
+    qs = parse_qs(urlsplit(out).query)
+    assert qs["kos"] == ["on"]
+    assert qs["ktruIdsCodes"] == ["31.01.11.150-00000021"]
+    assert qs["recordsPerPage"] == ["_50"]
+    assert qs["placingWayList"] == ["EZT20,EZTP20"]
+    assert "searchString" not in qs
+
+
+def test_etp_name_from_rss_url_maps_rts_tender():
+    url = (
+        "https://zakupki.gov.ru/epz/order/extendedsearch/rss.html?"
+        "etp_7360768=on&etp=7360768&placingWayList=EZT20"
+    )
+    assert etp_name_from_rss_url(url) == "РТС-тендер"
+    assert etp_name_from_rss_url("https://zakupki.gov.ru/epz/order/extendedsearch/rss.html") == ""

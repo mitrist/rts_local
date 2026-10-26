@@ -15,6 +15,7 @@ from rts_ktru_cache import (
     list_ktru_cache_status,
     load_cached_template,
     save_cached_template,
+    search_cached_ktru,
 )
 from rts_pp_api import RtsPpApiError
 
@@ -142,3 +143,21 @@ def test_extend_all_ktru_cache_validity(tmp_path):
     assert len(updated) == 2
     for code in ("K-1", "K-2"):
         assert load_cached_template(tmp_path, code) is not None
+
+
+def test_search_cached_ktru_by_name_and_code(tmp_path):
+    save_cached_template(
+        tmp_path,
+        "31.01.11.150-00000003",
+        {"code": "31.01.11.150-00000003", "name": "Стул на металлическом каркасе", "version": 5},
+    )
+    save_cached_template(
+        tmp_path,
+        "22.22.10.000-00000005",
+        {"code": "22.22.10.000-00000005", "name": "Мешок", "version": 6},
+    )
+    hits = search_cached_ktru(tmp_path, "стул")
+    assert len(hits) == 1
+    assert hits[0]["code"] == "31.01.11.150-00000003"
+    exact = search_cached_ktru(tmp_path, "22.22.10.000-00000005")
+    assert exact[0]["name"] == "Мешок"

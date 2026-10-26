@@ -17,16 +17,22 @@ from copy import deepcopy
 from datetime import date, datetime, time as dt_time, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable
+from urllib.parse import parse_qsl, urlsplit
 
 from eis_changelog import MSK, dt_to_msk_clean, parse_publish_datetime_utc
 from eis_ezt_archive import NoticeMatch
 from eis_history_config import HISTORY_DOCUMENT_TYPE_44
 from eis_ktru_characteristics import CustomerCharacteristic, KtruPurchaseLine
 from eis_notice_html_parse import parse_notice_common_info_context, parse_notice_common_info_html
+from eis_notice_html_fetch import normalize_eis_notice_link
 
-ANALYTICS_SCHEMA = 20
+ANALYTICS_SCHEMA = 25
 DEFAULT_DB_NAME = "eis_analytics.sqlite3"
+EIS_ETP_ID_NAMES = {
+    "7360768": "РТС-тендер",
+}
 DEFAULT_SQLITE_BUSY_TIMEOUT_MS = 30_000
+RSS_ETP_BACKFILL_META = "rss_etp_backfill_v1"
 RSS_TELEGRAM_LINE_KEY = "__rss__"
 RSS_TELEGRAM_CHANNEL = "telegram_rss_cron"
 
@@ -189,11 +195,20 @@ def init_db(conn: sqlite3.Connection) -> None:
           ikz TEXT,
           procedure_name TEXT,
           description_html TEXT,
+          etp_name TEXT,
           first_seen_poll_run_id INTEGER,
           first_seen_poll_finished_at_utc TEXT,
           detection_window_start_utc TEXT,
           detection_window_end_utc TEXT,
           FOREIGN KEY(first_seen_poll_run_id) REFERENCES rss_poll_runs(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS eis_rss_ktru_hints (
+          reg_number TEXT NOT NULL,
+          ktru_code TEXT NOT NULL,
+          first_seen_at_utc TEXT NOT NULL,
+          last_seen_at_utc TEXT NOT NULL,
+          PRIMARY KEY (reg_number, ktru_code)
         );
 
         CREATE TABLE IF NOT EXISTS notice_html_pages (
@@ -209,7 +224,8 @@ def init_db(conn: sqlite3.Connection) -> None:
           contract_execution_term TEXT,
           region TEXT,
           delivery_place TEXT,
-          delivery_days TEXT
+          delivery_days TEXT,
+          etp_name TEXT
         );
 
         CREATE TABLE IF NOT EXISTS notice_html_ktru_lines (
@@ -224,6 +240,7 @@ def init_db(conn: sqlite3.Connection) -> None:
           characteristics_count INTEGER NOT NULL DEFAULT 0,
           characteristics_json TEXT NOT NULL DEFAULT '[]',
           parsed_at_utc TEXT NOT NULL,
+          position_index INTEGER NOT NULL DEFAULT 0,
           FOREIGN KEY(purchase_number) REFERENCES notice_html_pages(purchase_number)
         );
 
@@ -272,8 +289,10 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_rss_pub_date ON eis_rss_observations(pub_date_utc);
         CREATE INDEX IF NOT EXISTS idx_rss_first_seen ON eis_rss_observations(first_seen_at_utc);
         CREATE INDEX IF NOT EXISTS idx_rss_query_label ON eis_rss_observations(query_label);
+        CREATE INDEX IF NOT EXISTS idx_rss_ktru_hints_code ON eis_rss_ktru_hints(ktru_code);
         CREATE INDEX IF NOT EXISTS idx_notice_html_status ON notice_html_pages(ok, fetched_at_utc);
         CREATE INDEX IF NOT EXISTS idx_notice_html_ktru_purchase ON notice_html_ktru_lines(purchase_number);
+        CREATE INDEX IF NOT EXISTS idx_notice_html_ktru_code ON notice_html_ktru_lines(ktru_code);
         CREATE INDEX IF NOT EXISTS idx_offer_watch_status ON offer_watch_notifications(status, sent_at_utc);
         CREATE INDEX IF NOT EXISTS idx_offer_watch_ktru ON offer_watch_notifications(ktru_code);
         CREATE INDEX IF NOT EXISTS idx_rts_pp_drafts_status ON rts_pp_drafts(status, created_at_utc);
@@ -292,6 +311,94 @@ def init_db(conn: sqlite3.Connection) -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_auto_pp_attempt_profile ON auto_participate_attempts(rts_profile, created_at_utc);
         CREATE INDEX IF NOT EXISTS idx_auto_pp_attempt_status ON auto_participate_attempts(status, created_at_utc);
+
+        CREATE TABLE IF NOT EXISTS auto_monitor_draft_queue (
+          offer_price_list_item_id TEXT NOT NULL,
+          rts_profile TEXT NOT NULL DEFAULT '',
+          ktru_code TEXT NOT NULL DEFAULT '',
+          pp_sum REAL,
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          error_text TEXT NOT NULL DEFAULT '',
+          rts_draft_id INTEGER,
+          created_at_utc TEXT NOT NULL,
+          updated_at_utc TEXT NOT NULL,
+          PRIMARY KEY (offer_price_list_item_id, rts_profile)
+        );
+        CREATE INDEX IF NOT EXISTS idx_auto_monitor_draft_queue_status
+          ON auto_monitor_draft_queue(status, created_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_auto_monitor_draft_queue_profile
+          ON auto_monitor_draft_queue(rts_profile, updated_at_utc);
+
+        CREATE TABLE IF NOT EXISTS pp_core_variants (
+          ktru_code TEXT NOT NULL,
+          variant_no INTEGER NOT NULL,
+          eis_hash TEXT NOT NULL,
+          n INTEGER NOT NULL DEFAULT 0,
+          share REAL,
+          map_status TEXT NOT NULL DEFAULT 'gap',
+          map_reason TEXT NOT NULL DEFAULT '',
+          chars_preview TEXT NOT NULL DEFAULT '',
+          characteristics_json TEXT NOT NULL DEFAULT '[]',
+          core_meta_json TEXT NOT NULL DEFAULT '{}',
+          updated_at_utc TEXT NOT NULL,
+          PRIMARY KEY (ktru_code, variant_no),
+          UNIQUE (ktru_code, eis_hash)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pp_core_variants_ktru
+          ON pp_core_variants(ktru_code, variant_no);
+
+        CREATE TABLE IF NOT EXISTS pp_core_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT NOT NULL,
+          ktru_code TEXT NOT NULL,
+          variant_no INTEGER NOT NULL,
+          eis_hash TEXT NOT NULL DEFAULT '',
+          rts_profile TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          regions_json TEXT NOT NULL DEFAULT '[]',
+          rts_draft_id INTEGER,
+          error_text TEXT NOT NULL DEFAULT '',
+          created_by TEXT NOT NULL DEFAULT '',
+          created_at_utc TEXT NOT NULL,
+          updated_at_utc TEXT NOT NULL,
+          UNIQUE (run_id, ktru_code, variant_no, rts_profile)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pp_core_queue_status
+          ON pp_core_queue(status, created_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_pp_core_queue_run
+          ON pp_core_queue(run_id, variant_no);
+
+        CREATE TABLE IF NOT EXISTS pp_virtual_queue (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id TEXT NOT NULL,
+          ktru_code TEXT NOT NULL,
+          variant_no INTEGER NOT NULL,
+          eis_hash TEXT NOT NULL DEFAULT '',
+          in_core INTEGER NOT NULL DEFAULT 1,
+          set_id TEXT NOT NULL DEFAULT '',
+          rts_profile TEXT NOT NULL DEFAULT '',
+          status TEXT NOT NULL DEFAULT 'pending',
+          attempts INTEGER NOT NULL DEFAULT 0,
+          regions_json TEXT NOT NULL DEFAULT '[]',
+          rts_draft_id INTEGER,
+          error_text TEXT NOT NULL DEFAULT '',
+          created_by TEXT NOT NULL DEFAULT '',
+          created_at_utc TEXT NOT NULL,
+          updated_at_utc TEXT NOT NULL,
+          UNIQUE (run_id, ktru_code, variant_no, rts_profile)
+        );
+        CREATE INDEX IF NOT EXISTS idx_pp_virtual_queue_status
+          ON pp_virtual_queue(status, created_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_pp_virtual_queue_run
+          ON pp_virtual_queue(run_id, variant_no);
+
+        CREATE TABLE IF NOT EXISTS pp_core_delivery (
+          ktru_code TEXT PRIMARY KEY,
+          regions_json TEXT NOT NULL DEFAULT '[]',
+          updated_at_utc TEXT NOT NULL
+        );
 
         CREATE TABLE IF NOT EXISTS rts_pp_monitor_notifications (
           offer_price_list_item_id TEXT NOT NULL,
@@ -444,6 +551,132 @@ def init_db(conn: sqlite3.Connection) -> None:
           ON rts_pp_publish_jobs(rts_draft_id, rts_profile, updated_at_utc);
         CREATE INDEX IF NOT EXISTS idx_rts_pp_publish_jobs_status
           ON rts_pp_publish_jobs(status, updated_at_utc);
+
+        CREATE TABLE IF NOT EXISTS notice_creation_data_snapshots (
+          purchase_number TEXT NOT NULL,
+          star TEXT NOT NULL,
+          ktru_code TEXT NOT NULL DEFAULT '',
+          creation_data_json TEXT NOT NULL,
+          fetched_at_utc TEXT NOT NULL,
+          source TEXT NOT NULL DEFAULT 'collector',
+          PRIMARY KEY (purchase_number, star)
+        );
+        CREATE INDEX IF NOT EXISTS idx_creation_data_snapshots_fetched
+          ON notice_creation_data_snapshots(fetched_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_creation_data_snapshots_ktru
+          ON notice_creation_data_snapshots(ktru_code);
+
+        CREATE TABLE IF NOT EXISTS html_creation_char_diffs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          purchase_number TEXT NOT NULL,
+          line_key TEXT NOT NULL,
+          star TEXT NOT NULL DEFAULT '',
+          collected_at_utc TEXT NOT NULL,
+          html_code TEXT NOT NULL DEFAULT '',
+          html_label TEXT NOT NULL DEFAULT '',
+          html_values_json TEXT NOT NULL DEFAULT '[]',
+          rts_code TEXT NOT NULL DEFAULT '',
+          rts_name TEXT NOT NULL DEFAULT '',
+          rts_values_json TEXT NOT NULL DEFAULT '[]',
+          status TEXT NOT NULL,
+          detail TEXT NOT NULL DEFAULT '',
+          create_risk TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_html_creation_diffs_pn
+          ON html_creation_char_diffs(purchase_number, line_key, collected_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_html_creation_diffs_status
+          ON html_creation_char_diffs(status, collected_at_utc);
+
+        CREATE TABLE IF NOT EXISTS region_alias_unknown (
+          region_raw TEXT PRIMARY KEY,
+          n INTEGER NOT NULL DEFAULT 1,
+          last_seen_utc TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS virtual_pp_sets (
+          set_id TEXT PRIMARY KEY,
+          ktru_code TEXT NOT NULL,
+          created_at_utc TEXT NOT NULL,
+          core_n INTEGER NOT NULL DEFAULT 0,
+          belt_n INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_virtual_pp_sets_ktru
+          ON virtual_pp_sets(ktru_code, created_at_utc);
+
+        CREATE TABLE IF NOT EXISTS virtual_pp_variants (
+          ktru_code TEXT NOT NULL,
+          variant_no INTEGER NOT NULL,
+          eis_hash TEXT NOT NULL,
+          in_core INTEGER NOT NULL DEFAULT 1,
+          characteristics_json TEXT NOT NULL DEFAULT '[]',
+          chars_preview TEXT NOT NULL DEFAULT '',
+          map_status TEXT NOT NULL DEFAULT '',
+          map_reason TEXT NOT NULL DEFAULT '',
+          set_id TEXT NOT NULL DEFAULT '',
+          updated_at_utc TEXT NOT NULL,
+          PRIMARY KEY (ktru_code, variant_no)
+        );
+        CREATE INDEX IF NOT EXISTS idx_virtual_pp_variants_set
+          ON virtual_pp_variants(ktru_code, set_id);
+
+        CREATE TABLE IF NOT EXISTS rts_ezt_notices (
+          notification_number TEXT PRIMARY KEY,
+          ktru_code TEXT NOT NULL DEFAULT '',
+          region_raw TEXT NOT NULL DEFAULT '',
+          subject_oktmo TEXT NOT NULL DEFAULT '',
+          nmck REAL,
+          url_trade_id TEXT NOT NULL DEFAULT '',
+          numeric_trade_id INTEGER,
+          lot_state INTEGER,
+          lot_state_label TEXT NOT NULL DEFAULT '',
+          participant_has_active_application INTEGER NOT NULL DEFAULT 0,
+          publication_date TEXT NOT NULL DEFAULT '',
+          publication_date_raw TEXT NOT NULL DEFAULT '',
+          trade_name TEXT NOT NULL DEFAULT '',
+          fetched_at_utc TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_rts_ezt_notices_ktru
+          ON rts_ezt_notices(ktru_code, publication_date);
+
+        CREATE TABLE IF NOT EXISTS rts_ezt_lot_items (
+          notification_number TEXT NOT NULL,
+          line_index INTEGER NOT NULL,
+          ktru_code TEXT NOT NULL DEFAULT '',
+          quantity REAL,
+          unit_price REAL,
+          total REAL,
+          characteristics_json TEXT NOT NULL DEFAULT '[]',
+          ktru_version INTEGER,
+          PRIMARY KEY (notification_number, line_index)
+        );
+        CREATE INDEX IF NOT EXISTS idx_rts_ezt_lot_items_ktru
+          ON rts_ezt_lot_items(ktru_code, notification_number);
+
+        CREATE TABLE IF NOT EXISTS virtual_match_events (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          notification_number TEXT NOT NULL,
+          line_index INTEGER NOT NULL,
+          ktru_code TEXT NOT NULL DEFAULT '',
+          variant_no INTEGER,
+          in_core INTEGER,
+          char_status TEXT NOT NULL,
+          subject_oktmo TEXT NOT NULL DEFAULT '',
+          region_raw TEXT NOT NULL DEFAULT '',
+          unit_price REAL,
+          quantity REAL,
+          nmck REAL,
+          own_application INTEGER NOT NULL DEFAULT 0,
+          qty_risk INTEGER NOT NULL DEFAULT 0,
+          offer_unit_price REAL,
+          winner_unit_price REAL,
+          set_id TEXT NOT NULL DEFAULT '',
+          matched_at_utc TEXT NOT NULL,
+          UNIQUE (notification_number, line_index, set_id)
+        );
+        CREATE INDEX IF NOT EXISTS idx_virtual_match_events_ktru
+          ON virtual_match_events(ktru_code, matched_at_utc);
+        CREATE INDEX IF NOT EXISTS idx_virtual_match_events_status
+          ON virtual_match_events(char_status, subject_oktmo);
         """
     )
     _ensure_column(conn, "rss_poll_runs", "previous_success_finished_at_utc", "TEXT")
@@ -451,11 +684,18 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "eis_rss_observations", "first_seen_poll_finished_at_utc", "TEXT")
     _ensure_column(conn, "eis_rss_observations", "detection_window_start_utc", "TEXT")
     _ensure_column(conn, "eis_rss_observations", "detection_window_end_utc", "TEXT")
+    _ensure_column(conn, "eis_rss_observations", "etp_name", "TEXT")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_rss_etp_name ON eis_rss_observations(etp_name)"
+    )
+    _backfill_rss_etp_names(conn)
     _ensure_column(conn, "notice_html_pages", "contract_start_date", "TEXT")
     _ensure_column(conn, "notice_html_pages", "contract_execution_term", "TEXT")
     _ensure_column(conn, "notice_html_pages", "region", "TEXT")
     _ensure_column(conn, "notice_html_pages", "delivery_place", "TEXT")
     _ensure_column(conn, "notice_html_pages", "delivery_days", "TEXT")
+    _ensure_column(conn, "notice_html_pages", "etp_name", "TEXT")
+    _ensure_column(conn, "notice_html_ktru_lines", "position_index", "INTEGER NOT NULL DEFAULT 0")
     _ensure_column(conn, "rts_pp_drafts", "fill_report_json", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "rts_pp_drafts", "verify_json", "TEXT NOT NULL DEFAULT ''")
     _migrate_rts_pp_drafts_profile(conn)
@@ -468,6 +708,11 @@ def init_db(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "pp_eis_pp_match", "participation_intent", "TEXT NOT NULL DEFAULT ''")
     _ensure_column(conn, "rts_pp_monitor_drafts", "draft_unit_price", "REAL")
     _ensure_column(conn, "rts_pp_monitor_drafts", "source_unit_price", "REAL")
+    _ensure_column(conn, "virtual_pp_variants", "map_status", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "virtual_pp_variants", "map_reason", "TEXT NOT NULL DEFAULT ''")
+    _ensure_column(conn, "virtual_match_events", "offer_unit_price", "REAL")
+    _ensure_column(conn, "virtual_match_events", "winner_unit_price", "REAL")
+    _ensure_column(conn, "virtual_match_events", "char_status_override", "TEXT")
     conn.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_pp_registry_stack
@@ -485,6 +730,78 @@ def init_db(conn: sqlite3.Connection) -> None:
         (str(ANALYTICS_SCHEMA),),
     )
     conn.commit()
+
+
+def etp_name_from_rss_url(url: str) -> str:
+    """Map EIS `etp=` / `etp_<id>=on` query params to a display name."""
+    raw = str(url or "").strip()
+    if not raw:
+        return ""
+    ids: list[str] = []
+    for key, value in parse_qsl(urlsplit(raw).query, keep_blank_values=True):
+        k = str(key or "").strip()
+        v = str(value or "").strip()
+        if k == "etp" and v:
+            ids.append(v)
+        elif k.startswith("etp_"):
+            suffix = k[4:].strip()
+            if v.lower() in ("", "on", "1", "true") and suffix:
+                ids.append(suffix)
+            elif v.isdigit():
+                ids.append(v)
+    names: list[str] = []
+    seen: set[str] = set()
+    for etp_id in ids:
+        name = EIS_ETP_ID_NAMES.get(etp_id)
+        if name and name not in seen:
+            seen.add(name)
+            names.append(name)
+    return names[0] if len(names) == 1 else ""
+
+
+def _backfill_rss_etp_names(conn: sqlite3.Connection) -> None:
+    try:
+        cols = {str(row["name"]) for row in conn.execute("PRAGMA table_info(eis_rss_observations)").fetchall()}
+    except sqlite3.Error:
+        return
+    if "etp_name" not in cols:
+        return
+    done = conn.execute(
+        "SELECT value FROM meta WHERE key = ?",
+        (RSS_ETP_BACKFILL_META,),
+    ).fetchone()
+    if done is not None and str(done["value"] or "") == "1":
+        return
+    rows = conn.execute(
+        """
+        SELECT query_label, rss_url
+        FROM rss_poll_runs
+        WHERE TRIM(COALESCE(rss_url, '')) <> ''
+        ORDER BY id DESC
+        """
+    ).fetchall()
+    seen_labels: set[str] = set()
+    for row in rows:
+        label = str(row["query_label"] or "")
+        if not label or label in seen_labels:
+            continue
+        name = etp_name_from_rss_url(str(row["rss_url"] or ""))
+        if not name:
+            continue
+        seen_labels.add(label)
+        conn.execute(
+            """
+            UPDATE eis_rss_observations
+            SET etp_name = ?
+            WHERE query_label = ?
+              AND TRIM(COALESCE(etp_name, '')) = ''
+            """,
+            (name, label),
+        )
+    conn.execute(
+        "INSERT OR REPLACE INTO meta(key, value) VALUES (?, '1')",
+        (RSS_ETP_BACKFILL_META,),
+    )
 
 
 def _ensure_column(conn: sqlite3.Connection, table: str, column: str, ddl_type: str) -> None:
@@ -775,6 +1092,7 @@ def record_rss_poll_run(
     finished_at_utc: datetime,
     ok: bool,
     errors: list[str],
+    update_query_label: bool = True,
 ) -> tuple[int, int]:
     started_iso = _utc_iso(started_at_utc)
     finished_iso = _utc_iso(finished_at_utc)
@@ -787,7 +1105,7 @@ def record_rss_poll_run(
             {
                 "reg_number": reg,
                 "title": str(raw.get("title") or "").strip(),
-                "link": str(raw.get("link") or "").strip(),
+                "link": normalize_eis_notice_link(str(raw.get("link") or ""), reg_number=reg),
                 "author": str(raw.get("author") or "").strip(),
                 "pub_date_utc": str(raw.get("pub_date_utc") or "").strip(),
                 "stage_text": str(raw.get("stage_text") or "").strip(),
@@ -796,6 +1114,7 @@ def record_rss_poll_run(
                 "ikz": str(raw.get("ikz") or "").strip(),
                 "procedure_name": str(raw.get("procedure_name") or "").strip(),
                 "description_html": str(raw.get("description_html") or ""),
+                "etp_name": str(raw.get("etp_name") or "").strip() or etp_name_from_rss_url(rss_url),
             }
         )
 
@@ -843,18 +1162,19 @@ def record_rss_poll_run(
             ),
         )
         run_id = int(cur.lastrowid or 0)
+        conflict_query_label = "query_label=excluded.query_label," if update_query_label else ""
         for item in normalized:
             conn.execute(
-                """
+                f"""
                 INSERT INTO eis_rss_observations(
                   reg_number, query_label, title, link, author, pub_date_utc,
                   first_seen_at_utc, last_seen_at_utc, stage_text, customer_name,
-                  price_text, ikz, procedure_name, description_html, first_seen_poll_run_id,
+                  price_text, ikz, procedure_name, description_html, etp_name, first_seen_poll_run_id,
                   first_seen_poll_finished_at_utc, detection_window_start_utc, detection_window_end_utc
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(reg_number) DO UPDATE SET
-                  query_label=excluded.query_label,
+                  {conflict_query_label}
                   title=excluded.title,
                   link=excluded.link,
                   author=excluded.author,
@@ -865,7 +1185,8 @@ def record_rss_poll_run(
                   price_text=excluded.price_text,
                   ikz=excluded.ikz,
                   procedure_name=excluded.procedure_name,
-                  description_html=excluded.description_html
+                  description_html=excluded.description_html,
+                  etp_name=COALESCE(NULLIF(excluded.etp_name, ''), eis_rss_observations.etp_name)
                 """,
                 (
                     item["reg_number"],
@@ -882,6 +1203,7 @@ def record_rss_poll_run(
                     item["ikz"],
                     item["procedure_name"],
                     item["description_html"],
+                    item["etp_name"],
                     run_id,
                     finished_iso,
                     previous_success_finished,
@@ -890,6 +1212,34 @@ def record_rss_poll_run(
             )
         conn.commit()
         return run_id, new_count
+
+
+def record_rss_ktru_hints(
+    path: Path,
+    reg_numbers: Iterable[str],
+    ktru_code: str,
+    *,
+    seen_at_utc: datetime | None = None,
+) -> int:
+    """Remember that EIS RSS for this catalog KTRU returned these notices (no HTML)."""
+    code = str(ktru_code or "").strip()
+    nums = [str(x or "").strip() for x in reg_numbers if str(x or "").strip()]
+    if not code or not nums:
+        return 0
+    iso = _utc_iso(seen_at_utc or datetime.now(timezone.utc))
+    with connect(path) as conn:
+        for reg in nums:
+            conn.execute(
+                """
+                INSERT INTO eis_rss_ktru_hints(reg_number, ktru_code, first_seen_at_utc, last_seen_at_utc)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(reg_number, ktru_code) DO UPDATE SET
+                  last_seen_at_utc=excluded.last_seen_at_utc
+                """,
+                (reg, code, iso, iso),
+            )
+        conn.commit()
+    return len(nums)
 
 
 def _notice_html_lines_from_text(
@@ -989,9 +1339,9 @@ def reparse_notice_html_ktru_lines(path: Path, purchase_number: str) -> int:
                 INSERT INTO notice_html_ktru_lines(
                   line_key, purchase_number, ktru_code, position_display_name, unit_text,
                   quantity_text, price_per_unit_text, line_sum_text, characteristics_count,
-                  characteristics_json, parsed_at_utc
+                  characteristics_json, parsed_at_utc, position_index
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     line.line_key,
@@ -1005,6 +1355,7 @@ def reparse_notice_html_ktru_lines(path: Path, purchase_number: str) -> int:
                     len(line.characteristics),
                     chars_json,
                     parsed_at,
+                    int(getattr(line, "position_index", 0) or 0),
                 ),
             )
         conn.commit()
@@ -1035,9 +1386,9 @@ def record_notice_html_page(
             INSERT INTO notice_html_pages(
               purchase_number, source_url, fetched_at_utc, ok, http_status,
               error_text, html_sha256, html_text, contract_start_date,
-              contract_execution_term, region, delivery_place, delivery_days
+              contract_execution_term, region, delivery_place, delivery_days, etp_name
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(purchase_number) DO UPDATE SET
               source_url=excluded.source_url,
               fetched_at_utc=excluded.fetched_at_utc,
@@ -1050,11 +1401,12 @@ def record_notice_html_page(
               contract_execution_term=excluded.contract_execution_term,
               region=excluded.region,
               delivery_place=excluded.delivery_place,
-              delivery_days=excluded.delivery_days
+              delivery_days=excluded.delivery_days,
+              etp_name=excluded.etp_name
             """,
             (
                 purchase_number,
-                source_url,
+                normalize_eis_notice_link(source_url, reg_number=purchase_number),
                 fetched_iso,
                 1 if ok else 0,
                 http_status,
@@ -1066,8 +1418,20 @@ def record_notice_html_page(
                 str(context.get("region") or ""),
                 str(context.get("delivery_place") or ""),
                 str(context.get("delivery_days") or ""),
+                str(context.get("etp_name") or ""),
             ),
         )
+        etp = str(context.get("etp_name") or "").strip()
+        if etp:
+            conn.execute(
+                """
+                UPDATE eis_rss_observations
+                SET etp_name = ?
+                WHERE reg_number = ?
+                  AND TRIM(COALESCE(etp_name, '')) = ''
+                """,
+                (etp, purchase_number),
+            )
         conn.execute("DELETE FROM notice_html_ktru_lines WHERE purchase_number = ?", (purchase_number,))
         if ok:
             for line in lines:
@@ -1077,9 +1441,9 @@ def record_notice_html_page(
                     INSERT INTO notice_html_ktru_lines(
                       line_key, purchase_number, ktru_code, position_display_name, unit_text,
                       quantity_text, price_per_unit_text, line_sum_text, characteristics_count,
-                      characteristics_json, parsed_at_utc
+                      characteristics_json, parsed_at_utc, position_index
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         line.line_key,
@@ -1093,6 +1457,7 @@ def record_notice_html_page(
                         len(line.characteristics),
                         chars_json,
                         fetched_iso,
+                        int(getattr(line, "position_index", 0) or 0),
                     ),
                 )
         conn.commit()
@@ -1449,7 +1814,7 @@ def notice_html_payload(path: Path, purchase_number: str) -> dict[str, Any]:
             """
             SELECT purchase_number, source_url, fetched_at_utc, ok, http_status,
                    error_text, html_sha256, contract_start_date, contract_execution_term,
-                   region, delivery_place, delivery_days, html_text
+                   region, delivery_place, delivery_days, etp_name, html_text
             FROM notice_html_pages
             WHERE purchase_number = ?
             """,
@@ -1469,7 +1834,14 @@ def notice_html_payload(path: Path, purchase_number: str) -> dict[str, Any]:
             (purchase_number,),
         ).fetchall()
     page_d = dict(page)
-    context_keys = ("contract_start_date", "contract_execution_term", "region", "delivery_place", "delivery_days")
+    context_keys = (
+        "contract_start_date",
+        "contract_execution_term",
+        "region",
+        "delivery_place",
+        "delivery_days",
+        "etp_name",
+    )
     if any(not page_d.get(k) for k in context_keys):
         context = parse_notice_common_info_context(str(page_d.get("html_text") or ""))
         for key in context_keys:
@@ -3301,6 +3673,47 @@ def find_pp_publish_job_for_draft(
     return _row_to_publish_job(row)
 
 
+def list_pp_publish_jobs(
+    path: Path,
+    *,
+    status: str | None = "awaiting_signature",
+    rts_profile: str = "",
+    source: str = "",
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """List publish jobs (default: awaiting operator CryptoPro signature)."""
+    if not path.is_file():
+        return []
+    lim = max(1, min(int(limit), 100))
+    profile = str(rts_profile or "").strip()
+    src = str(source or "").strip()
+    st = str(status or "").strip()
+    clauses: list[str] = []
+    params: list[Any] = []
+    if st:
+        clauses.append("status = ?")
+        params.append(st)
+    if profile:
+        clauses.append("rts_profile = ?")
+        params.append(profile)
+    if src:
+        clauses.append("source = ?")
+        params.append(src)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    params.append(lim)
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT * FROM rts_pp_publish_jobs
+            {where}
+            ORDER BY id ASC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    return [j for j in (_row_to_publish_job(r) for r in rows) if j]
+
+
 def create_pp_publish_job(
     path: Path,
     *,
@@ -3431,6 +3844,95 @@ def list_rts_pp_drafts(
     return [dict(row) for row in rows]
 
 
+def has_rts_pp_draft_id(
+    path: Path,
+    *,
+    rts_draft_id: int,
+    rts_profile: str,
+) -> bool:
+    profile = str(rts_profile or "").strip()
+    if not profile or not path.is_file():
+        return False
+    try:
+        draft_id = int(rts_draft_id)
+    except (TypeError, ValueError):
+        return False
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT 1 AS ok FROM rts_pp_drafts
+            WHERE rts_draft_id = ? AND rts_profile = ?
+            LIMIT 1
+            """,
+            (draft_id, profile),
+        ).fetchone()
+    return bool(row)
+
+
+def release_pp_virtual_queue_for_draft(
+    path: Path,
+    *,
+    rts_profile: str,
+    rts_draft_id: int | None,
+) -> int:
+    """Free virtual-queue occupancy after the local Черновики ПП row is removed."""
+    profile = str(rts_profile or "").strip()
+    if not profile or rts_draft_id is None or not path.is_file():
+        return 0
+    try:
+        draft_id = int(rts_draft_id)
+    except (TypeError, ValueError):
+        return 0
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE pp_virtual_queue
+            SET status = 'released',
+                error_text = 'черновик удалён на странице «Черновики ПП»',
+                updated_at_utc = ?
+            WHERE rts_profile = ?
+              AND rts_draft_id = ?
+              AND status IN ('drafted')
+            """,
+            (now_iso, profile, draft_id),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+
+def release_pp_core_queue_for_draft(
+    path: Path,
+    *,
+    rts_profile: str,
+    rts_draft_id: int | None,
+) -> int:
+    """Free core-queue occupancy after the local Черновики ПП row is removed."""
+    profile = str(rts_profile or "").strip()
+    if not profile or rts_draft_id is None or not path.is_file():
+        return 0
+    try:
+        draft_id = int(rts_draft_id)
+    except (TypeError, ValueError):
+        return 0
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        cur = conn.execute(
+            """
+            UPDATE pp_core_queue
+            SET status = 'released',
+                error_text = 'черновик удалён на странице «Черновики ПП»',
+                updated_at_utc = ?
+            WHERE rts_profile = ?
+              AND rts_draft_id = ?
+              AND status IN ('drafted', 'publish_prepared', 'done')
+            """,
+            (now_iso, profile, draft_id),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+
 def delete_rts_pp_draft(
     path: Path,
     purchase_number: str,
@@ -3445,12 +3947,27 @@ def delete_rts_pp_draft(
     if not pn or not lk or not path.is_file():
         return False
     with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT rts_draft_id FROM rts_pp_drafts
+            WHERE purchase_number = ? AND line_key = ? AND rts_profile = ?
+            """,
+            (pn, lk, profile),
+        ).fetchone()
         cur = conn.execute(
             "DELETE FROM rts_pp_drafts WHERE purchase_number = ? AND line_key = ? AND rts_profile = ?",
             (pn, lk, profile),
         )
         conn.commit()
-        return int(cur.rowcount or 0) > 0
+        deleted = int(cur.rowcount or 0) > 0
+    if deleted and row is not None:
+        release_pp_core_queue_for_draft(
+            path, rts_profile=profile, rts_draft_id=row["rts_draft_id"]
+        )
+        release_pp_virtual_queue_for_draft(
+            path, rts_profile=profile, rts_draft_id=row["rts_draft_id"]
+        )
+    return deleted
 
 
 def get_rts_pp_draft(
@@ -3477,6 +3994,31 @@ def get_rts_pp_draft(
             (pn, lk, profile),
         ).fetchone()
     return dict(row) if row else None
+
+
+def next_local_virtual_draft_id(path: Path, *, rts_profile: str = "") -> int:
+    """Negative ids for local virtual_core drafts; they never collide with RTS cabinet ids."""
+    profile = str(rts_profile or "").strip()
+    if not path.is_file():
+        return -1
+    with connect(path) as conn:
+        if profile:
+            row = conn.execute(
+                """
+                SELECT MIN(rts_draft_id) AS m FROM rts_pp_drafts
+                WHERE rts_profile = ? AND rts_draft_id IS NOT NULL AND rts_draft_id < 0
+                """,
+                (profile,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT MIN(rts_draft_id) AS m FROM rts_pp_drafts
+                WHERE rts_draft_id IS NOT NULL AND rts_draft_id < 0
+                """
+            ).fetchone()
+    current = int(row["m"]) if row and row["m"] is not None else 0
+    return current - 1 if current < 0 else -1
 
 
 def save_rts_pp_draft(
@@ -3564,9 +4106,15 @@ def record_auto_participate_attempt(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(purchase_number, line_key, rts_profile) DO UPDATE SET
               status=excluded.status,
-              ktru_code=excluded.ktru_code,
-              rts_draft_id=excluded.rts_draft_id,
-              edit_url=excluded.edit_url,
+              ktru_code=CASE
+                WHEN excluded.ktru_code = '' THEN auto_participate_attempts.ktru_code
+                ELSE excluded.ktru_code
+              END,
+              rts_draft_id=COALESCE(excluded.rts_draft_id, auto_participate_attempts.rts_draft_id),
+              edit_url=CASE
+                WHEN excluded.edit_url = '' THEN auto_participate_attempts.edit_url
+                ELSE excluded.edit_url
+              END,
               error_text=excluded.error_text,
               created_at_utc=excluded.created_at_utc
             """,
@@ -3662,7 +4210,7 @@ def count_auto_participate_created_since(
             SELECT COUNT(*) AS c
             FROM auto_participate_attempts
             WHERE rts_profile = ?
-              AND status = 'created'
+              AND status IN ('created', 'awaiting_signature', 'published')
               AND created_at_utc >= ?
             """,
             (str(rts_profile or "").strip(), since_iso),
@@ -3670,20 +4218,933 @@ def count_auto_participate_created_since(
     return int(row["c"] if row else 0)
 
 
+def get_auto_monitor_draft_queue_row(
+    path: Path,
+    offer_price_list_item_id: str,
+    *,
+    rts_profile: str,
+) -> dict[str, Any] | None:
+    oid = str(offer_price_list_item_id or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not oid or not path.is_file():
+        return None
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT offer_price_list_item_id, rts_profile, ktru_code, pp_sum, status,
+                   attempts, error_text, rts_draft_id, created_at_utc, updated_at_utc
+            FROM auto_monitor_draft_queue
+            WHERE offer_price_list_item_id = ? AND rts_profile = ?
+            """,
+            (oid, profile),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def enqueue_auto_monitor_draft(
+    path: Path,
+    *,
+    offer_price_list_item_id: str,
+    rts_profile: str,
+    ktru_code: str = "",
+    pp_sum: float | None = None,
+) -> bool:
+    """Insert or re-queue failed row. Returns True when row is pending after call."""
+    oid = str(offer_price_list_item_id or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not oid or not profile:
+        return False
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    existing = get_auto_monitor_draft_queue_row(path, oid, rts_profile=profile)
+    if existing:
+        status = str(existing.get("status") or "")
+        if status in ("pending", "processing", "done"):
+            return status == "pending"
+        with connect(path) as conn:
+            conn.execute(
+                """
+                UPDATE auto_monitor_draft_queue
+                SET ktru_code = ?, pp_sum = ?, status = 'pending',
+                    error_text = '', updated_at_utc = ?
+                WHERE offer_price_list_item_id = ? AND rts_profile = ?
+                """,
+                (
+                    str(ktru_code or "").strip(),
+                    pp_sum,
+                    now_iso,
+                    oid,
+                    profile,
+                ),
+            )
+            conn.commit()
+        return True
+    with connect(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO auto_monitor_draft_queue(
+              offer_price_list_item_id, rts_profile, ktru_code, pp_sum, status,
+              attempts, error_text, rts_draft_id, created_at_utc, updated_at_utc
+            )
+            VALUES (?, ?, ?, ?, 'pending', 0, '', NULL, ?, ?)
+            """,
+            (
+                oid,
+                profile,
+                str(ktru_code or "").strip(),
+                pp_sum,
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.commit()
+    return True
+
+
+def claim_next_auto_monitor_draft(
+    path: Path,
+    *,
+    rts_profile: str = "",
+) -> dict[str, Any] | None:
+    """Claim oldest pending row (FIFO). Optional profile filter."""
+    if not path.is_file():
+        return None
+    profile = str(rts_profile or "").strip()
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        if profile:
+            row = conn.execute(
+                """
+                SELECT offer_price_list_item_id, rts_profile, ktru_code, pp_sum, status,
+                       attempts, error_text, rts_draft_id, created_at_utc, updated_at_utc
+                FROM auto_monitor_draft_queue
+                WHERE status = 'pending' AND rts_profile = ?
+                ORDER BY created_at_utc ASC
+                LIMIT 1
+                """,
+                (profile,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT offer_price_list_item_id, rts_profile, ktru_code, pp_sum, status,
+                       attempts, error_text, rts_draft_id, created_at_utc, updated_at_utc
+                FROM auto_monitor_draft_queue
+                WHERE status = 'pending'
+                ORDER BY created_at_utc ASC
+                LIMIT 1
+                """
+            ).fetchone()
+        if not row:
+            return None
+        data = dict(row)
+        conn.execute(
+            """
+            UPDATE auto_monitor_draft_queue
+            SET status = 'processing',
+                attempts = attempts + 1,
+                updated_at_utc = ?
+            WHERE offer_price_list_item_id = ? AND rts_profile = ? AND status = 'pending'
+            """,
+            (now_iso, data["offer_price_list_item_id"], data["rts_profile"]),
+        )
+        if conn.total_changes < 1:
+            conn.commit()
+            return None
+        conn.commit()
+        data["status"] = "processing"
+        data["attempts"] = int(data.get("attempts") or 0) + 1
+        data["updated_at_utc"] = now_iso
+        return data
+
+
+def update_auto_monitor_draft_queue(
+    path: Path,
+    offer_price_list_item_id: str,
+    *,
+    rts_profile: str,
+    status: str,
+    error_text: str = "",
+    rts_draft_id: int | None = None,
+) -> None:
+    oid = str(offer_price_list_item_id or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not oid or not profile or not path.is_file():
+        return
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE auto_monitor_draft_queue
+            SET status = ?,
+                error_text = ?,
+                rts_draft_id = COALESCE(?, rts_draft_id),
+                updated_at_utc = ?
+            WHERE offer_price_list_item_id = ? AND rts_profile = ?
+            """,
+            (
+                str(status or "").strip(),
+                str(error_text or "")[:2000],
+                rts_draft_id,
+                now_iso,
+                oid,
+                profile,
+            ),
+        )
+        conn.commit()
+
+
+def count_auto_monitor_draft_pending(
+    path: Path,
+    *,
+    rts_profile: str = "",
+) -> int:
+    if not path.is_file():
+        return 0
+    profile = str(rts_profile or "").strip()
+    with connect(path) as conn:
+        if profile:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS c FROM auto_monitor_draft_queue
+                WHERE status = 'pending' AND rts_profile = ?
+                """,
+                (profile,),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT COUNT(*) AS c FROM auto_monitor_draft_queue WHERE status = 'pending'"
+            ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def count_auto_monitor_draft_done_since(
+    path: Path,
+    *,
+    rts_profile: str,
+    since_utc: datetime,
+) -> int:
+    """Count finished queue items (draft created / publish prepared) in the last hour."""
+    if not path.is_file():
+        return 0
+    since_iso = _utc_iso(since_utc)
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT COUNT(*) AS c
+            FROM auto_monitor_draft_queue
+            WHERE rts_profile = ?
+              AND status IN ('created', 'done', 'awaiting_signature', 'published')
+              AND updated_at_utc >= ?
+            """,
+            (str(rts_profile or "").strip(), since_iso),
+        ).fetchone()
+    return int(row["c"] if row else 0)
+
+
+def list_auto_monitor_draft_queue(
+    path: Path,
+    *,
+    limit: int = 30,
+    rts_profile: str | None = None,
+) -> list[dict[str, Any]]:
+    lim = max(1, min(int(limit), 200))
+    if not path.is_file():
+        return []
+    profile = str(rts_profile or "").strip()
+    with connect(path) as conn:
+        if profile:
+            rows = conn.execute(
+                """
+                SELECT offer_price_list_item_id, rts_profile, ktru_code, pp_sum, status,
+                       attempts, error_text, rts_draft_id, created_at_utc, updated_at_utc
+                FROM auto_monitor_draft_queue
+                WHERE rts_profile = ?
+                ORDER BY updated_at_utc DESC
+                LIMIT ?
+                """,
+                (profile, lim),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT offer_price_list_item_id, rts_profile, ktru_code, pp_sum, status,
+                       attempts, error_text, rts_draft_id, created_at_utc, updated_at_utc
+                FROM auto_monitor_draft_queue
+                ORDER BY updated_at_utc DESC
+                LIMIT ?
+                """,
+                (lim,),
+            ).fetchall()
+    return [dict(row) for row in rows]
+
+
+_PP_CORE_VARIANT_COLS = (
+    "ktru_code, variant_no, eis_hash, n, share, map_status, map_reason, "
+    "chars_preview, characteristics_json, core_meta_json, updated_at_utc"
+)
+_PP_CORE_QUEUE_COLS = (
+    "id, run_id, ktru_code, variant_no, eis_hash, rts_profile, status, attempts, "
+    "regions_json, rts_draft_id, error_text, created_by, created_at_utc, updated_at_utc"
+)
+
+
+def _pp_core_parse_json(raw: object, fallback: Any) -> Any:
+    try:
+        data = json.loads(str(raw or "") or ("[]" if isinstance(fallback, list) else "{}"))
+    except json.JSONDecodeError:
+        return fallback
+    if type(data) is type(fallback):
+        return data
+    return fallback
+
+
+def _pp_core_variant_from_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    data["n"] = int(data.get("n") or 0)
+    data["variant_no"] = int(data.get("variant_no") or 0)
+    share = data.get("share")
+    data["share"] = float(share) if share is not None else None
+    data["characteristics"] = _pp_core_parse_json(data.get("characteristics_json"), [])
+    data["core_meta"] = _pp_core_parse_json(data.get("core_meta_json"), {})
+    return data
+
+
+def _pp_core_queue_from_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    data = dict(row)
+    data["id"] = int(data.get("id") or 0)
+    data["variant_no"] = int(data.get("variant_no") or 0)
+    data["attempts"] = int(data.get("attempts") or 0)
+    draft_id = data.get("rts_draft_id")
+    data["rts_draft_id"] = int(draft_id) if draft_id is not None else None
+    data["regions"] = _pp_core_parse_json(data.get("regions_json"), [])
+    return data
+
+
+def list_pp_core_ktru_codes(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    with connect(path) as conn:
+        rows = conn.execute(
+            "SELECT DISTINCT ktru_code FROM pp_core_variants ORDER BY ktru_code"
+        ).fetchall()
+    return [str(row["ktru_code"]) for row in rows if str(row["ktru_code"] or "").strip()]
+
+
+def list_pp_core_variants(path: Path, ktru_code: str) -> list[dict[str, Any]]:
+    code = str(ktru_code or "").strip()
+    if not code or not path.is_file():
+        return []
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_PP_CORE_VARIANT_COLS}
+            FROM pp_core_variants
+            WHERE ktru_code = ?
+            ORDER BY variant_no ASC
+            """,
+            (code,),
+        ).fetchall()
+    return [_pp_core_variant_from_row(row) for row in rows]
+
+
+def get_pp_core_variant(path: Path, ktru_code: str, variant_no: int) -> dict[str, Any] | None:
+    code = str(ktru_code or "").strip()
+    if not code or not path.is_file():
+        return None
+    with connect(path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT {_PP_CORE_VARIANT_COLS}
+            FROM pp_core_variants
+            WHERE ktru_code = ? AND variant_no = ?
+            """,
+            (code, int(variant_no)),
+        ).fetchone()
+    return _pp_core_variant_from_row(row) if row else None
+
+
+def max_pp_core_variant_no(path: Path, ktru_code: str) -> int:
+    code = str(ktru_code or "").strip()
+    if not code or not path.is_file():
+        return 0
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT MAX(variant_no) AS m FROM pp_core_variants WHERE ktru_code = ?",
+            (code,),
+        ).fetchone()
+    return int(row["m"] or 0) if row else 0
+
+
+def save_pp_core_snapshot(path: Path, ktru_code: str, variants: list[dict[str, Any]]) -> None:
+    """Upsert snapshot rows for one KTRU. Keep variant_no on known eis_hash; drop hashes not in payload."""
+    code = str(ktru_code or "").strip()
+    if not code:
+        return
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    hashes = [str(v.get("eis_hash") or "").strip() for v in variants if str(v.get("eis_hash") or "").strip()]
+    with connect(path) as conn:
+        if hashes:
+            placeholders = ",".join("?" * len(hashes))
+            conn.execute(
+                f"DELETE FROM pp_core_variants WHERE ktru_code = ? AND eis_hash NOT IN ({placeholders})",
+                [code, *hashes],
+            )
+        else:
+            conn.execute("DELETE FROM pp_core_variants WHERE ktru_code = ?", (code,))
+        for row in variants:
+            eis_hash = str(row.get("eis_hash") or "").strip()
+            if not eis_hash:
+                continue
+            try:
+                variant_no = int(row.get("variant_no") or 0)
+            except (TypeError, ValueError):
+                continue
+            if variant_no < 1:
+                continue
+            chars = row.get("characteristics")
+            if not isinstance(chars, list):
+                chars = _pp_core_parse_json(row.get("characteristics_json"), [])
+            meta = row.get("core_meta")
+            if not isinstance(meta, dict):
+                meta = _pp_core_parse_json(row.get("core_meta_json"), {})
+            conn.execute(
+                """
+                INSERT INTO pp_core_variants(
+                  ktru_code, variant_no, eis_hash, n, share, map_status, map_reason,
+                  chars_preview, characteristics_json, core_meta_json, updated_at_utc
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(ktru_code, eis_hash) DO UPDATE SET
+                  n=excluded.n,
+                  share=excluded.share,
+                  map_status=excluded.map_status,
+                  map_reason=excluded.map_reason,
+                  chars_preview=excluded.chars_preview,
+                  characteristics_json=excluded.characteristics_json,
+                  core_meta_json=excluded.core_meta_json,
+                  updated_at_utc=excluded.updated_at_utc
+                """,
+                (
+                    code,
+                    variant_no,
+                    eis_hash,
+                    int(row.get("n") or 0),
+                    row.get("share"),
+                    str(row.get("map_status") or "gap"),
+                    str(row.get("map_reason") or "")[:2000],
+                    str(row.get("chars_preview") or "")[:4000],
+                    _json_dumps(chars)[:32000],
+                    _json_dumps(meta)[:8000],
+                    now_iso,
+                ),
+            )
+        conn.commit()
+
+
+def get_pp_core_delivery(path: Path, ktru_code: str) -> list[dict[str, Any]]:
+    code = str(ktru_code or "").strip()
+    if not code or not path.is_file():
+        return []
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT regions_json FROM pp_core_delivery WHERE ktru_code = ?",
+            (code,),
+        ).fetchone()
+    if not row:
+        return []
+    data = _pp_core_parse_json(row["regions_json"], [])
+    return [x for x in data if isinstance(x, dict)]
+
+
+def save_pp_core_delivery(path: Path, ktru_code: str, regions: list[dict[str, Any]]) -> None:
+    code = str(ktru_code or "").strip()
+    if not code:
+        return
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    payload = [row for row in regions if isinstance(row, dict)]
+    with connect(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO pp_core_delivery(ktru_code, regions_json, updated_at_utc)
+            VALUES (?, ?, ?)
+            ON CONFLICT(ktru_code) DO UPDATE SET
+              regions_json=excluded.regions_json,
+              updated_at_utc=excluded.updated_at_utc
+            """,
+            (code, _json_dumps(payload)[:32000], now_iso),
+        )
+        conn.commit()
+
+
+def has_active_pp_core_queue_item(
+    path: Path,
+    *,
+    ktru_code: str,
+    variant_no: int,
+    rts_profile: str,
+) -> bool:
+    code = str(ktru_code or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not code or not profile or not path.is_file():
+        return False
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT 1 AS ok FROM pp_core_queue
+            WHERE ktru_code = ? AND variant_no = ? AND rts_profile = ?
+              AND status IN ('pending', 'running')
+            LIMIT 1
+            """,
+            (code, int(variant_no), profile),
+        ).fetchone()
+    return bool(row)
+
+
+def insert_pp_core_queue_row(
+    path: Path,
+    *,
+    run_id: str,
+    ktru_code: str,
+    variant_no: int,
+    eis_hash: str = "",
+    rts_profile: str = "",
+    regions: list[dict[str, Any]] | None = None,
+    created_by: str = "",
+) -> bool:
+    rid = str(run_id or "").strip()
+    code = str(ktru_code or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not rid or not code or not profile:
+        return False
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    payload = [row for row in (regions or []) if isinstance(row, dict)]
+    with connect(path) as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO pp_core_queue(
+              run_id, ktru_code, variant_no, eis_hash, rts_profile, status, attempts,
+              regions_json, rts_draft_id, error_text, created_by, created_at_utc, updated_at_utc
+            )
+            VALUES (?, ?, ?, ?, ?, 'pending', 0, ?, NULL, '', ?, ?, ?)
+            """,
+            (
+                rid,
+                code,
+                int(variant_no),
+                str(eis_hash or "").strip(),
+                profile,
+                _json_dumps(payload)[:32000],
+                str(created_by or "")[:200],
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0) > 0
+
+
+def claim_next_pp_core_queue(
+    path: Path,
+    *,
+    rts_profile: str = "",
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    profile = str(rts_profile or "").strip()
+    rid = str(run_id or "").strip()
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    where = ["status = 'pending'"]
+    args: list[Any] = []
+    if profile:
+        where.append("rts_profile = ?")
+        args.append(profile)
+    if rid:
+        where.append("run_id = ?")
+        args.append(rid)
+    sql_where = " AND ".join(where)
+    with connect(path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT {_PP_CORE_QUEUE_COLS}
+            FROM pp_core_queue
+            WHERE {sql_where}
+            ORDER BY created_at_utc ASC, variant_no ASC, id ASC
+            LIMIT 1
+            """,
+            tuple(args),
+        ).fetchone()
+        if not row:
+            return None
+        data = _pp_core_queue_from_row(row)
+        conn.execute(
+            """
+            UPDATE pp_core_queue
+            SET status = 'running',
+                attempts = attempts + 1,
+                updated_at_utc = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (now_iso, data["id"]),
+        )
+        if conn.total_changes < 1:
+            conn.commit()
+            return None
+        conn.commit()
+        data["status"] = "running"
+        data["attempts"] = int(data.get("attempts") or 0) + 1
+        data["updated_at_utc"] = now_iso
+        return data
+
+
+def update_pp_core_queue(
+    path: Path,
+    queue_id: int,
+    *,
+    status: str,
+    error_text: str = "",
+    rts_draft_id: int | None = None,
+) -> None:
+    if not path.is_file():
+        return
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE pp_core_queue
+            SET status = ?,
+                error_text = ?,
+                rts_draft_id = COALESCE(?, rts_draft_id),
+                updated_at_utc = ?
+            WHERE id = ?
+            """,
+            (
+                str(status or "").strip(),
+                str(error_text or "")[:2000],
+                rts_draft_id,
+                now_iso,
+                int(queue_id),
+            ),
+        )
+        conn.commit()
+
+
+def list_pp_core_queue(
+    path: Path,
+    *,
+    run_id: str = "",
+    ktru_code: str = "",
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    lim = max(1, min(int(limit), 500))
+    rid = str(run_id or "").strip()
+    code = str(ktru_code or "").strip()
+    where: list[str] = []
+    args: list[Any] = []
+    if rid:
+        where.append("run_id = ?")
+        args.append(rid)
+    if code:
+        where.append("ktru_code = ?")
+        args.append(code)
+    sql_where = ("WHERE " + " AND ".join(where)) if where else ""
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_PP_CORE_QUEUE_COLS}
+            FROM pp_core_queue
+            {sql_where}
+            ORDER BY variant_no ASC, id ASC
+            LIMIT ?
+            """,
+            (*args, lim),
+        ).fetchall()
+    return [_pp_core_queue_from_row(row) for row in rows]
+
+
+_PP_VIRTUAL_QUEUE_COLS = (
+    "id, run_id, ktru_code, variant_no, eis_hash, in_core, set_id, rts_profile, status, attempts, "
+    "regions_json, rts_draft_id, error_text, created_by, created_at_utc, updated_at_utc"
+)
+
+
+def _pp_virtual_queue_from_row(row: sqlite3.Row | dict[str, Any]) -> dict[str, Any]:
+    data = _pp_core_queue_from_row(row)
+    data["in_core"] = 1 if int(data.get("in_core") or 0) else 0
+    data["set_id"] = str(data.get("set_id") or "")
+    return data
+
+
+def has_active_pp_virtual_queue_item(
+    path: Path,
+    *,
+    ktru_code: str,
+    variant_no: int,
+    rts_profile: str,
+) -> bool:
+    code = str(ktru_code or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not code or not profile or not path.is_file():
+        return False
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT 1 AS ok FROM pp_virtual_queue
+            WHERE ktru_code = ? AND variant_no = ? AND rts_profile = ?
+              AND status IN ('pending', 'running')
+            LIMIT 1
+            """,
+            (code, int(variant_no), profile),
+        ).fetchone()
+    return bool(row)
+
+
+def insert_pp_virtual_queue_row(
+    path: Path,
+    *,
+    run_id: str,
+    ktru_code: str,
+    variant_no: int,
+    eis_hash: str = "",
+    in_core: int = 1,
+    set_id: str = "",
+    rts_profile: str = "",
+    regions: list[dict[str, Any]] | None = None,
+    created_by: str = "",
+) -> bool:
+    rid = str(run_id or "").strip()
+    code = str(ktru_code or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not rid or not code or not profile:
+        return False
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    payload = [row for row in (regions or []) if isinstance(row, dict)]
+    with connect(path) as conn:
+        cur = conn.execute(
+            """
+            INSERT OR IGNORE INTO pp_virtual_queue(
+              run_id, ktru_code, variant_no, eis_hash, in_core, set_id, rts_profile, status, attempts,
+              regions_json, rts_draft_id, error_text, created_by, created_at_utc, updated_at_utc
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', 0, ?, NULL, '', ?, ?, ?)
+            """,
+            (
+                rid,
+                code,
+                int(variant_no),
+                str(eis_hash or "").strip(),
+                1 if int(in_core or 0) else 0,
+                str(set_id or "").strip(),
+                profile,
+                _json_dumps(payload)[:32000],
+                str(created_by or "")[:200],
+                now_iso,
+                now_iso,
+            ),
+        )
+        conn.commit()
+        return int(cur.rowcount or 0) > 0
+
+
+def claim_next_pp_virtual_queue(
+    path: Path,
+    *,
+    rts_profile: str = "",
+    run_id: str = "",
+) -> dict[str, Any] | None:
+    if not path.is_file():
+        return None
+    profile = str(rts_profile or "").strip()
+    rid = str(run_id or "").strip()
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    where = ["status = 'pending'"]
+    args: list[Any] = []
+    if profile:
+        where.append("rts_profile = ?")
+        args.append(profile)
+    if rid:
+        where.append("run_id = ?")
+        args.append(rid)
+    sql_where = " AND ".join(where)
+    with connect(path) as conn:
+        row = conn.execute(
+            f"""
+            SELECT {_PP_VIRTUAL_QUEUE_COLS}
+            FROM pp_virtual_queue
+            WHERE {sql_where}
+            ORDER BY created_at_utc ASC, variant_no ASC, id ASC
+            LIMIT 1
+            """,
+            tuple(args),
+        ).fetchone()
+        if not row:
+            return None
+        data = _pp_virtual_queue_from_row(row)
+        conn.execute(
+            """
+            UPDATE pp_virtual_queue
+            SET status = 'running',
+                attempts = attempts + 1,
+                updated_at_utc = ?
+            WHERE id = ? AND status = 'pending'
+            """,
+            (now_iso, data["id"]),
+        )
+        if conn.total_changes < 1:
+            conn.commit()
+            return None
+        conn.commit()
+        data["status"] = "running"
+        data["attempts"] = int(data.get("attempts") or 0) + 1
+        data["updated_at_utc"] = now_iso
+        return data
+
+
+def update_pp_virtual_queue(
+    path: Path,
+    queue_id: int,
+    *,
+    status: str,
+    error_text: str = "",
+    rts_draft_id: int | None = None,
+) -> None:
+    if not path.is_file():
+        return
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE pp_virtual_queue
+            SET status = ?,
+                error_text = ?,
+                rts_draft_id = COALESCE(?, rts_draft_id),
+                updated_at_utc = ?
+            WHERE id = ?
+            """,
+            (
+                str(status or "").strip(),
+                str(error_text or "")[:2000],
+                rts_draft_id,
+                now_iso,
+                int(queue_id),
+            ),
+        )
+        conn.commit()
+
+
+def update_pp_virtual_queue_regions(
+    path: Path,
+    queue_id: int,
+    regions: list[dict[str, Any]],
+) -> None:
+    if not path.is_file():
+        return
+    payload = [row for row in (regions or []) if isinstance(row, dict)]
+    now_iso = _utc_iso(datetime.now(timezone.utc))
+    with connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE pp_virtual_queue
+            SET regions_json = ?, updated_at_utc = ?
+            WHERE id = ?
+            """,
+            (_json_dumps(payload)[:32000], now_iso, int(queue_id)),
+        )
+        conn.commit()
+
+
+def list_pp_virtual_queue(
+    path: Path,
+    *,
+    run_id: str = "",
+    ktru_code: str = "",
+    limit: int = 200,
+) -> list[dict[str, Any]]:
+    if not path.is_file():
+        return []
+    lim = max(1, min(int(limit), 500))
+    rid = str(run_id or "").strip()
+    code = str(ktru_code or "").strip()
+    where: list[str] = []
+    args: list[Any] = []
+    if rid:
+        where.append("run_id = ?")
+        args.append(rid)
+    if code:
+        where.append("ktru_code = ?")
+        args.append(code)
+    sql_where = ("WHERE " + " AND ".join(where)) if where else ""
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT {_PP_VIRTUAL_QUEUE_COLS}
+            FROM pp_virtual_queue
+            {sql_where}
+            ORDER BY variant_no ASC, id ASC
+            LIMIT ?
+            """,
+            (*args, lim),
+        ).fetchall()
+    return [_pp_virtual_queue_from_row(row) for row in rows]
+
+
 def auto_participate_candidates(
     path: Path,
     *,
     limit: int = 50,
     rts_profile: str,
+    purchase_number: str | None = None,
 ) -> list[dict[str, Any]]:
     """HTML-loaded lines without prior auto-participate attempt for profile."""
     lim = max(1, min(int(limit), 200))
     profile = str(rts_profile or "").strip()
+    pn = str(purchase_number or "").strip()
     if not path.is_file() or not profile:
         return []
+    clauses = ["COALESCE(l.ktru_code, '') <> ''"]
+    params: list[Any] = []
+    if pn:
+        clauses.append("l.purchase_number = ?")
+        params.append(pn)
+    clauses.append(
+        """NOT EXISTS (
+                SELECT 1 FROM auto_participate_attempts a
+                WHERE a.purchase_number = l.purchase_number
+                  AND a.line_key = l.line_key
+                  AND a.rts_profile = ?
+              )"""
+    )
+    params.append(profile)
+    clauses.append(
+        """NOT EXISTS (
+                SELECT 1 FROM rts_pp_drafts d
+                WHERE d.purchase_number = l.purchase_number
+                  AND d.line_key = l.line_key
+                  AND d.rts_profile = ?
+                  AND d.status = 'created'
+                  AND d.rts_draft_id IS NOT NULL
+              )"""
+    )
+    params.append(profile)
+    # Also skip if a synthetic RTS draft already exists for same KTRU.
+    clauses.append(
+        """NOT EXISTS (
+                SELECT 1 FROM rts_pp_drafts d
+                WHERE d.purchase_number = l.purchase_number
+                  AND d.ktru_code = l.ktru_code
+                  AND d.rts_profile = ?
+                  AND d.status = 'created'
+                  AND d.rts_draft_id IS NOT NULL
+              )"""
+    )
+    params.append(profile)
+    where = " AND ".join(clauses)
+    params.append(lim)
     with connect(path) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT
               l.line_key,
               l.purchase_number,
@@ -3695,12 +5156,14 @@ def auto_participate_candidates(
               l.characteristics_count,
               l.characteristics_json,
               l.parsed_at_utc,
+              COALESCE(l.position_index, 0) AS position_index,
               p.source_url,
               p.fetched_at_utc,
               p.region,
               p.delivery_place,
               p.delivery_days,
               p.contract_execution_term,
+              p.etp_name,
               r.pub_date_utc,
               r.first_seen_at_utc,
               r.customer_name,
@@ -3709,25 +5172,11 @@ def auto_participate_candidates(
             FROM notice_html_ktru_lines l
             JOIN notice_html_pages p ON p.purchase_number = l.purchase_number AND p.ok = 1
             LEFT JOIN eis_rss_observations r ON r.reg_number = l.purchase_number
-            WHERE COALESCE(l.ktru_code, '') <> ''
-              AND NOT EXISTS (
-                SELECT 1 FROM auto_participate_attempts a
-                WHERE a.purchase_number = l.purchase_number
-                  AND a.line_key = l.line_key
-                  AND a.rts_profile = ?
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM rts_pp_drafts d
-                WHERE d.purchase_number = l.purchase_number
-                  AND d.line_key = l.line_key
-                  AND d.rts_profile = ?
-                  AND d.status = 'created'
-                  AND d.rts_draft_id IS NOT NULL
-              )
+            WHERE {where}
             ORDER BY COALESCE(r.pub_date_utc, p.fetched_at_utc) DESC, l.purchase_number DESC
             LIMIT ?
             """,
-            (profile, profile, lim),
+            tuple(params),
         ).fetchall()
     out: list[dict[str, Any]] = []
     for row in rows:
@@ -3738,8 +5187,363 @@ def auto_participate_candidates(
             d["characteristics"] = []
         d.pop("characteristics_json", None)
         d["html_status"] = "loaded"
+        d["html_present"] = True
+        d["etp_name"] = str(d.get("etp_name") or "").strip()
         out.append(d)
     return out
+
+
+def auto_participate_rss_candidates(
+    path: Path,
+    *,
+    limit: int = 50,
+    rts_profile: str,
+    purchase_number: str | None = None,
+    min_price: float | None = None,
+) -> list[dict[str, Any]]:
+    """RSS notices without successful HTML — for PP create via RTS creation-data probe."""
+    lim = max(1, min(int(limit), 200))
+    profile = str(rts_profile or "").strip()
+    pn = str(purchase_number or "").strip()
+    if not path.is_file() or not profile:
+        return []
+    clauses = [
+        "COALESCE(r.link, '') <> ''",
+        "(p.purchase_number IS NULL OR p.ok IS NULL OR p.ok = 0)",
+    ]
+    params: list[Any] = []
+    if pn:
+        clauses.append("r.reg_number = ?")
+        params.append(pn)
+    clauses.append(
+        """NOT EXISTS (
+                SELECT 1 FROM rts_pp_drafts d
+                WHERE d.purchase_number = r.reg_number
+                  AND d.rts_profile = ?
+                  AND d.status = 'created'
+                  AND d.rts_draft_id IS NOT NULL
+              )"""
+    )
+    params.append(profile)
+    clauses.append(
+        """NOT EXISTS (
+                SELECT 1 FROM auto_participate_attempts a
+                WHERE a.purchase_number = r.reg_number
+                  AND a.rts_profile = ?
+                  AND a.line_key LIKE r.reg_number || '|%|rts:%'
+              )"""
+    )
+    params.append(profile)
+    where = " AND ".join(clauses)
+    scan_limit = lim
+    if min_price is not None and float(min_price) > 0:
+        scan_limit = min(max(lim * 30, 150), 2000)
+    params.append(scan_limit)
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+              r.reg_number AS purchase_number,
+              r.link AS source_url,
+              r.price_text,
+              r.pub_date_utc,
+              r.first_seen_at_utc,
+              r.customer_name,
+              r.stage_text,
+              p.etp_name,
+              p.ok AS html_ok
+            FROM eis_rss_observations r
+            LEFT JOIN notice_html_pages p ON p.purchase_number = r.reg_number
+            WHERE {where}
+            ORDER BY r.pub_date_utc DESC, r.first_seen_at_utc DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    threshold = float(min_price) if min_price is not None and float(min_price) > 0 else None
+    for row in rows:
+        d = dict(row)
+        if threshold is not None:
+            amount = _parse_rub_amount(str(d.get("price_text") or ""))
+            if amount is None or amount < threshold:
+                continue
+        d["line_key"] = ""
+        d["ktru_code"] = ""
+        d["characteristics"] = []
+        d["html_present"] = False
+        d["html_status"] = "pending"
+        d["etp_name"] = str(d.get("etp_name") or "").strip()
+        out.append(d)
+        if len(out) >= lim:
+            break
+    return out
+
+
+def rts_synthetic_line_key(purchase_number: str, ktru_code: str, star: str) -> str:
+    pn = str(purchase_number or "").strip()
+    ktru = str(ktru_code or "").strip()
+    star_s = str(star or "").strip()
+    return f"{pn}|{ktru}|rts:{star_s}"
+
+
+def has_created_pp_draft_for_ktru(
+    path: Path,
+    *,
+    purchase_number: str,
+    ktru_code: str,
+    rts_profile: str,
+) -> bool:
+    pn = str(purchase_number or "").strip()
+    ktru = str(ktru_code or "").strip()
+    profile = str(rts_profile or "").strip()
+    if not path.is_file() or not pn or not ktru or not profile:
+        return False
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM rts_pp_drafts
+            WHERE purchase_number = ?
+              AND ktru_code = ?
+              AND rts_profile = ?
+              AND status = 'created'
+              AND rts_draft_id IS NOT NULL
+            LIMIT 1
+            """,
+            (pn, ktru, profile),
+        ).fetchone()
+    return row is not None
+
+
+def save_creation_data_snapshot(
+    path: Path,
+    *,
+    purchase_number: str,
+    star: str,
+    creation_data: dict[str, Any],
+    source: str = "collector",
+    fetched_at_utc: datetime | str | None = None,
+) -> None:
+    pn = str(purchase_number or "").strip()
+    star_s = str(star or "").strip()
+    if not pn or not star_s:
+        raise ValueError("purchase_number and star required")
+    if fetched_at_utc is None:
+        fetched_iso = _utc_iso(datetime.now(timezone.utc))
+    elif isinstance(fetched_at_utc, datetime):
+        fetched_iso = _utc_iso(fetched_at_utc)
+    else:
+        fetched_iso = str(fetched_at_utc).strip()
+    ktru = str((creation_data or {}).get("ktruCode") or "").strip()
+    payload = _json_dumps(creation_data if isinstance(creation_data, dict) else {})
+    with connect(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO notice_creation_data_snapshots(
+              purchase_number, star, ktru_code, creation_data_json, fetched_at_utc, source
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(purchase_number, star) DO UPDATE SET
+              ktru_code=excluded.ktru_code,
+              creation_data_json=excluded.creation_data_json,
+              fetched_at_utc=excluded.fetched_at_utc,
+              source=excluded.source
+            """,
+            (pn, star_s, ktru, payload, fetched_iso, str(source or "collector").strip() or "collector"),
+        )
+        conn.commit()
+
+
+def get_creation_data_snapshot(
+    path: Path,
+    *,
+    purchase_number: str,
+    star: str,
+) -> dict[str, Any] | None:
+    pn = str(purchase_number or "").strip()
+    star_s = str(star or "").strip()
+    if not path.is_file() or not pn or not star_s:
+        return None
+    with connect(path) as conn:
+        row = conn.execute(
+            """
+            SELECT purchase_number, star, ktru_code, creation_data_json, fetched_at_utc, source
+            FROM notice_creation_data_snapshots
+            WHERE purchase_number = ? AND star = ?
+            """,
+            (pn, star_s),
+        ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    try:
+        d["creation_data"] = json.loads(str(d.get("creation_data_json") or "{}"))
+    except json.JSONDecodeError:
+        d["creation_data"] = {}
+    return d
+
+
+def save_html_creation_diffs(
+    path: Path,
+    *,
+    purchase_number: str,
+    line_key: str,
+    star: str,
+    rows: list[dict[str, Any]],
+    collected_at_utc: datetime | str | None = None,
+    replace_previous: bool = True,
+) -> int:
+    pn = str(purchase_number or "").strip()
+    lk = str(line_key or "").strip()
+    star_s = str(star or "").strip()
+    if not pn or not lk:
+        raise ValueError("purchase_number and line_key required")
+    if collected_at_utc is None:
+        collected_iso = _utc_iso(datetime.now(timezone.utc))
+    elif isinstance(collected_at_utc, datetime):
+        collected_iso = _utc_iso(collected_at_utc)
+    else:
+        collected_iso = str(collected_at_utc).strip()
+    with connect(path) as conn:
+        if replace_previous:
+            conn.execute(
+                """
+                DELETE FROM html_creation_char_diffs
+                WHERE purchase_number = ? AND line_key = ? AND star = ?
+                """,
+                (pn, lk, star_s),
+            )
+        for row in rows:
+            conn.execute(
+                """
+                INSERT INTO html_creation_char_diffs(
+                  purchase_number, line_key, star, collected_at_utc,
+                  html_code, html_label, html_values_json,
+                  rts_code, rts_name, rts_values_json,
+                  status, detail, create_risk
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    pn,
+                    lk,
+                    star_s,
+                    collected_iso,
+                    str(row.get("html_code") or ""),
+                    str(row.get("html_label") or ""),
+                    _json_dumps(row.get("html_values") if row.get("html_values") is not None else row.get("html_values_json") or []),
+                    str(row.get("rts_code") or ""),
+                    str(row.get("rts_name") or ""),
+                    _json_dumps(row.get("rts_values") if row.get("rts_values") is not None else row.get("rts_values_json") or []),
+                    str(row.get("status") or "ok"),
+                    str(row.get("detail") or ""),
+                    str(row.get("create_risk") or ""),
+                ),
+            )
+        conn.commit()
+    return len(rows)
+
+
+def list_collector_candidates(
+    path: Path,
+    *,
+    limit: int = 50,
+    purchase_number: str | None = None,
+    ktru_code: str | None = None,
+    pub_from_utc: str | None = None,
+    require_no_snapshot: bool = False,
+    require_created_draft: bool = False,
+    oldest_first: bool = False,
+) -> list[dict[str, Any]]:
+    """HTML-loaded lines for HTML↔creation-data collection."""
+    if not path.is_file():
+        return []
+    lim = max(1, min(int(limit), 500))
+    clauses = ["p.ok = 1", "COALESCE(l.ktru_code, '') <> ''"]
+    params: list[Any] = []
+    pn = str(purchase_number or "").strip()
+    if pn:
+        clauses.append("l.purchase_number = ?")
+        params.append(pn)
+    ktru = str(ktru_code or "").strip()
+    if ktru:
+        clauses.append("l.ktru_code = ?")
+        params.append(ktru)
+    pub_from = str(pub_from_utc or "").strip()
+    if pub_from:
+        clauses.append("COALESCE(NULLIF(r.pub_date_utc, ''), r.first_seen_at_utc) >= ?")
+        params.append(pub_from)
+    if require_no_snapshot:
+        clauses.append(
+            """NOT EXISTS (
+                SELECT 1 FROM notice_creation_data_snapshots s
+                WHERE s.purchase_number = l.purchase_number
+                  AND s.ktru_code = l.ktru_code
+              )"""
+        )
+    if require_created_draft:
+        clauses.append(
+            """EXISTS (
+                SELECT 1 FROM rts_pp_drafts d
+                WHERE d.purchase_number = l.purchase_number
+                  AND d.ktru_code = l.ktru_code
+                  AND d.status = 'created'
+                  AND d.rts_draft_id IS NOT NULL
+              )"""
+        )
+    where = " AND ".join(clauses)
+    order = "ASC" if oldest_first else "DESC"
+    params.append(lim)
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT
+              l.line_key,
+              l.purchase_number,
+              l.ktru_code,
+              l.position_display_name,
+              l.characteristics_json,
+              COALESCE(l.position_index, 0) AS position_index,
+              r.pub_date_utc,
+              r.first_seen_at_utc,
+              r.link AS source_url
+            FROM notice_html_ktru_lines l
+            JOIN notice_html_pages p ON p.purchase_number = l.purchase_number
+            LEFT JOIN eis_rss_observations r ON r.reg_number = l.purchase_number
+            WHERE {where}
+            ORDER BY COALESCE(r.pub_date_utc, r.first_seen_at_utc, l.parsed_at_utc) {order}
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    out: list[dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        try:
+            d["characteristics"] = json.loads(str(d.get("characteristics_json") or "[]"))
+        except json.JSONDecodeError:
+            d["characteristics"] = []
+        d.pop("characteristics_json", None)
+        out.append(d)
+    return out
+
+
+def list_notice_html_ktru_codes(path: Path, purchase_number: str) -> list[str]:
+    """Distinct KTRU codes from a successfully loaded notice HTML card."""
+    pn = str(purchase_number or "").strip()
+    if not path.is_file() or not pn:
+        return []
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT l.ktru_code
+            FROM notice_html_ktru_lines l
+            JOIN notice_html_pages p ON p.purchase_number = l.purchase_number AND p.ok = 1
+            WHERE l.purchase_number = ?
+              AND COALESCE(l.ktru_code, '') <> ''
+            ORDER BY l.ktru_code
+            """,
+            (pn,),
+        ).fetchall()
+    return [str(r[0]).strip() for r in rows if str(r[0] or "").strip()]
 
 
 def get_auto_participate_edit_url(
@@ -3987,31 +5791,87 @@ def notice_html_fetch_candidates(
     *,
     limit: int = 10,
     retry_errors: bool = False,
+    min_price: float | None = None,
+    catalog_ktru_codes: list[str] | None = None,
 ) -> list[dict[str, Any]]:
+    """RSS notices still without successful HTML.
+
+    When ``catalog_ktru_codes`` is set, only notices tagged with those KTRU
+    (EIS catalog RSS hints) are returned — no NMCK filter.
+    """
     if not path.is_file():
         return []
+    lim = max(1, int(limit))
+    catalog = [c.strip() for c in (catalog_ktru_codes or []) if c and str(c).strip()]
+    if catalog_ktru_codes is not None and not catalog:
+        return []
     error_sql = " OR p.ok = 0" if retry_errors else ""
+    scan_limit = lim
+    if catalog:
+        min_price = None
+    if min_price is not None and float(min_price) > 0:
+        scan_limit = min(max(lim * 30, 150), 2000)
     with connect(path) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT
-              r.reg_number AS purchase_number,
-              r.link AS source_url,
-              r.pub_date_utc,
-              r.first_seen_at_utc,
-              p.ok AS html_ok,
-              p.error_text AS html_error_text,
-              p.fetched_at_utc AS html_fetched_at_utc
-            FROM eis_rss_observations r
-            LEFT JOIN notice_html_pages p ON p.purchase_number = r.reg_number
-            WHERE COALESCE(r.link, '') <> ''
-              AND (p.purchase_number IS NULL{error_sql})
-            ORDER BY r.pub_date_utc DESC, r.first_seen_at_utc DESC
-            LIMIT ?
-            """,
-            (max(1, int(limit)),),
-        ).fetchall()
-    return [dict(r) for r in rows]
+        if catalog:
+            placeholders = ",".join("?" * len(catalog))
+            rows = conn.execute(
+                f"""
+                SELECT
+                  r.reg_number AS purchase_number,
+                  r.link AS source_url,
+                  r.price_text AS price_text,
+                  r.pub_date_utc,
+                  r.first_seen_at_utc,
+                  p.ok AS html_ok,
+                  p.error_text AS html_error_text,
+                  p.fetched_at_utc AS html_fetched_at_utc
+                FROM eis_rss_observations r
+                JOIN (
+                  SELECT DISTINCT reg_number
+                  FROM eis_rss_ktru_hints
+                  WHERE ktru_code IN ({placeholders})
+                ) h ON h.reg_number = r.reg_number
+                LEFT JOIN notice_html_pages p ON p.purchase_number = r.reg_number
+                WHERE COALESCE(r.link, '') <> ''
+                  AND (p.purchase_number IS NULL{error_sql})
+                ORDER BY r.pub_date_utc DESC, r.first_seen_at_utc DESC
+                LIMIT ?
+                """,
+                [*catalog, lim],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""
+                SELECT
+                  r.reg_number AS purchase_number,
+                  r.link AS source_url,
+                  r.price_text AS price_text,
+                  r.pub_date_utc,
+                  r.first_seen_at_utc,
+                  p.ok AS html_ok,
+                  p.error_text AS html_error_text,
+                  p.fetched_at_utc AS html_fetched_at_utc
+                FROM eis_rss_observations r
+                LEFT JOIN notice_html_pages p ON p.purchase_number = r.reg_number
+                WHERE COALESCE(r.link, '') <> ''
+                  AND (p.purchase_number IS NULL{error_sql})
+                ORDER BY r.pub_date_utc DESC, r.first_seen_at_utc DESC
+                LIMIT ?
+                """,
+                (scan_limit,),
+            ).fetchall()
+    out: list[dict[str, Any]] = []
+    threshold = float(min_price) if min_price is not None and float(min_price) > 0 else None
+    for row in rows:
+        d = dict(row)
+        if threshold is not None:
+            amount = _parse_rub_amount(str(d.get("price_text") or ""))
+            if amount is None or amount < threshold:
+                continue
+        out.append(d)
+        if len(out) >= lim:
+            break
+    return out
 
 
 def msk_day_bounds_utc(day: date | None = None) -> tuple[str, str]:
@@ -4023,13 +5883,76 @@ def msk_day_bounds_utc(day: date | None = None) -> tuple[str, str]:
     return _utc_iso(start), _utc_iso(end)
 
 
-def _offer_matching_filter_sql(
+_OFFER_MATCHING_ETP_SQL = "TRIM(COALESCE(r.etp_name, ''))"
+_OFFER_MATCHING_HTML_SELECT_SQL = """
+              l.line_key AS line_key,
+              r.reg_number AS purchase_number,
+              l.ktru_code AS ktru_code,
+              COALESCE(l.position_display_name, '') AS position_display_name,
+              l.unit_text,
+              l.quantity_text,
+              l.price_per_unit_text,
+              l.line_sum_text,
+              COALESCE(l.characteristics_count, 0) AS characteristics_count,
+              COALESCE(l.characteristics_json, '[]') AS characteristics_json,
+              l.parsed_at_utc,
+              COALESCE(l.position_index, 0) AS position_index,
+              r.link AS source_url,
+              r.pub_date_utc,
+              r.first_seen_at_utc,
+              r.customer_name,
+              r.price_text,
+              r.stage_text,
+              TRIM(COALESCE(r.etp_name, '')) AS etp_name
+"""
+_OFFER_MATCHING_HINT_SELECT_SQL = """
+              r.reg_number || '|' || h.ktru_code || '|rss-hint' AS line_key,
+              r.reg_number AS purchase_number,
+              h.ktru_code AS ktru_code,
+              '' AS position_display_name,
+              NULL AS unit_text,
+              NULL AS quantity_text,
+              NULL AS price_per_unit_text,
+              NULL AS line_sum_text,
+              0 AS characteristics_count,
+              '[]' AS characteristics_json,
+              NULL AS parsed_at_utc,
+              0 AS position_index,
+              r.link AS source_url,
+              r.pub_date_utc,
+              r.first_seen_at_utc,
+              r.customer_name,
+              r.price_text,
+              r.stage_text,
+              TRIM(COALESCE(r.etp_name, '')) AS etp_name
+"""
+_OFFER_MATCHING_RSS_SELECT_SQL = """
+              CAST(NULL AS TEXT) AS line_key,
+              r.reg_number AS purchase_number,
+              CAST(NULL AS TEXT) AS ktru_code,
+              '' AS position_display_name,
+              NULL AS unit_text,
+              NULL AS quantity_text,
+              NULL AS price_per_unit_text,
+              NULL AS line_sum_text,
+              0 AS characteristics_count,
+              '[]' AS characteristics_json,
+              NULL AS parsed_at_utc,
+              0 AS position_index,
+              r.link AS source_url,
+              r.pub_date_utc,
+              r.first_seen_at_utc,
+              r.customer_name,
+              r.price_text,
+              r.stage_text,
+              TRIM(COALESCE(r.etp_name, '')) AS etp_name
+"""
+
+
+def _offer_matching_r_filter_sql(
     *,
     purchase_number: str | None = None,
-    line_key: str | None = None,
-    ktru_query: str | None = None,
-    ktru_queries: list[str] | None = None,
-    catalog_ktru_codes: list[str] | None = None,
+    etp_name: str | None = None,
     pub_from_utc: str | None = None,
     pub_to_utc: str | None = None,
 ) -> tuple[str, list[Any]]:
@@ -4038,24 +5961,10 @@ def _offer_matching_filter_sql(
     if purchase_number:
         where_sql += " AND r.reg_number = ?"
         params.append(purchase_number)
-    if line_key:
-        where_sql += " AND l.line_key = ?"
-        params.append(line_key)
-    codes = [c.strip() for c in (catalog_ktru_codes or []) if c and str(c).strip()]
-    if codes:
-        placeholders = ",".join("?" * len(codes))
-        where_sql += f" AND l.ktru_code IN ({placeholders})"
-        params.extend(codes)
-    queries = [q.strip() for q in (ktru_queries or []) if q.strip()]
-    if ktru_query and not queries:
-        queries = [ktru_query.strip()]
-    if queries:
-        parts: list[str] = []
-        for query in queries:
-            normalized_query = _norm_ktru_query(query)
-            parts.append(_ktru_search_sql())
-            params.extend([f"%{query.lower()}%", f"%{normalized_query}%"])
-        where_sql += " AND (" + " OR ".join(parts) + ")"
+    etp = str(etp_name or "").strip()
+    if etp:
+        where_sql += f" AND {_OFFER_MATCHING_ETP_SQL} = ?"
+        params.append(etp)
     pub_col = "COALESCE(NULLIF(r.pub_date_utc, ''), r.first_seen_at_utc)"
     if pub_from_utc:
         where_sql += f" AND {pub_col} >= ?"
@@ -4064,6 +5973,184 @@ def _offer_matching_filter_sql(
         where_sql += f" AND {pub_col} < ?"
         params.append(pub_to_utc)
     return where_sql, params
+
+
+def _offer_matching_ktru_filter_sql(
+    ktru_sql: str,
+    *,
+    ktru_query: str | None = None,
+    ktru_queries: list[str] | None = None,
+    catalog_ktru_codes: list[str] | None = None,
+) -> tuple[str, list[Any]]:
+    where_sql = ""
+    params: list[Any] = []
+    codes = [c.strip() for c in (catalog_ktru_codes or []) if c and str(c).strip()]
+    if codes:
+        placeholders = ",".join("?" * len(codes))
+        where_sql += f" AND {ktru_sql} IN ({placeholders})"
+        params.extend(codes)
+    queries = [q.strip() for q in (ktru_queries or []) if q.strip()]
+    if ktru_query and not queries:
+        queries = [ktru_query.strip()]
+    if queries:
+        parts: list[str] = []
+        for query in queries:
+            normalized_query = _norm_ktru_query(query)
+            parts.append(_ktru_search_sql(ktru_sql))
+            params.extend([f"%{query.lower()}%", f"%{normalized_query}%"])
+        where_sql += " AND (" + " OR ".join(parts) + ")"
+    return where_sql, params
+
+
+def _offer_matching_union_sql(
+    *,
+    purchase_number: str | None = None,
+    line_key: str | None = None,
+    ktru_query: str | None = None,
+    ktru_queries: list[str] | None = None,
+    catalog_ktru_codes: list[str] | None = None,
+    etp_name: str | None = None,
+    pub_from_utc: str | None = None,
+    pub_to_utc: str | None = None,
+) -> tuple[str, list[Any]]:
+    """HTML lines, plus at most one RSS KTRU hint per notice that has no HTML lines."""
+    r_sql, r_params = _offer_matching_r_filter_sql(
+        purchase_number=purchase_number,
+        etp_name=etp_name,
+        pub_from_utc=pub_from_utc,
+        pub_to_utc=pub_to_utc,
+    )
+    html_ktru_sql, html_ktru_params = _offer_matching_ktru_filter_sql(
+        "l.ktru_code",
+        ktru_query=ktru_query,
+        ktru_queries=ktru_queries,
+        catalog_ktru_codes=catalog_ktru_codes,
+    )
+    hint_ktru_sql, hint_ktru_params = _offer_matching_ktru_filter_sql(
+        "hh.ktru_code",
+        ktru_query=ktru_query,
+        ktru_queries=ktru_queries,
+        catalog_ktru_codes=catalog_ktru_codes,
+    )
+    lk = str(line_key or "").strip()
+    html_line_sql = ""
+    hint_line_sql = ""
+    html_line_params: list[Any] = []
+    hint_line_params: list[Any] = []
+    if lk:
+        html_line_sql = " AND l.line_key = ?"
+        html_line_params = [lk]
+        hint_line_sql = " AND (r.reg_number || '|' || h.ktru_code || '|rss-hint') = ?"
+        hint_line_params = [lk]
+    html_sql = f"""
+            SELECT {_OFFER_MATCHING_HTML_SELECT_SQL}
+            FROM eis_rss_observations r
+            JOIN notice_html_ktru_lines l ON l.purchase_number = r.reg_number
+            WHERE 1 = 1{r_sql}{html_ktru_sql}{html_line_sql}
+    """
+    if lk:
+        hint_join = """
+            JOIN eis_rss_ktru_hints h ON h.reg_number = r.reg_number
+        """
+        hint_sub_params: list[Any] = []
+        hint_ktru_outer, hint_ktru_outer_params = _offer_matching_ktru_filter_sql(
+            "h.ktru_code",
+            ktru_query=ktru_query,
+            ktru_queries=ktru_queries,
+            catalog_ktru_codes=catalog_ktru_codes,
+        )
+    else:
+        hint_join = f"""
+            JOIN (
+              SELECT hh.reg_number, MIN(hh.ktru_code) AS ktru_code
+              FROM eis_rss_ktru_hints hh
+              WHERE 1 = 1{hint_ktru_sql}
+              GROUP BY hh.reg_number
+            ) h ON h.reg_number = r.reg_number
+        """
+        hint_sub_params = list(hint_ktru_params)
+        hint_ktru_outer = ""
+        hint_ktru_outer_params = []
+    hint_sql = f"""
+            SELECT {_OFFER_MATCHING_HINT_SELECT_SQL}
+            FROM eis_rss_observations r
+            {hint_join}
+            WHERE NOT EXISTS (
+              SELECT 1 FROM notice_html_ktru_lines x WHERE x.purchase_number = r.reg_number
+            ){r_sql}{hint_ktru_outer}{hint_line_sql}
+    """
+    parts = [html_sql, hint_sql]
+    params: list[Any] = (
+        list(r_params)
+        + list(html_ktru_params)
+        + list(html_line_params)
+        + list(hint_sub_params)
+        + list(r_params)
+        + list(hint_ktru_outer_params)
+        + list(hint_line_params)
+    )
+    catalog_codes = [c.strip() for c in (catalog_ktru_codes or []) if c and str(c).strip()]
+    queries = [q.strip() for q in (ktru_queries or []) if q.strip()]
+    if ktru_query and not queries:
+        queries = [ktru_query.strip()]
+    if not lk and not catalog_codes and not queries:
+        rss_sql = f"""
+            SELECT {_OFFER_MATCHING_RSS_SELECT_SQL}
+            FROM eis_rss_observations r
+            WHERE NOT EXISTS (
+              SELECT 1 FROM notice_html_ktru_lines x WHERE x.purchase_number = r.reg_number
+            )
+              AND NOT EXISTS (
+              SELECT 1 FROM eis_rss_ktru_hints h WHERE h.reg_number = r.reg_number
+            ){r_sql}
+        """
+        parts.append(rss_sql)
+        params.extend(r_params)
+    sql = " UNION ALL ".join(parts)
+    return sql, params
+
+
+def _merge_offer_matching_page_meta(conn: sqlite3.Connection, rows: list[dict[str, Any]]) -> None:
+    """Attach HTML page fields for the current result page only — never join html_text in the list SQL."""
+    pns = list(dict.fromkeys(str(row.get("purchase_number") or "").strip() for row in rows))
+    pns = [pn for pn in pns if pn]
+    if not pns:
+        return
+    placeholders = ",".join("?" * len(pns))
+    pages = {
+        str(row["purchase_number"]): dict(row)
+        for row in conn.execute(
+            f"""
+            SELECT
+              purchase_number, source_url, fetched_at_utc, ok AS html_ok,
+              error_text AS html_error_text, contract_start_date,
+              contract_execution_term, region, delivery_place, delivery_days,
+              etp_name, html_text
+            FROM notice_html_pages
+            WHERE purchase_number IN ({placeholders})
+            """,
+            pns,
+        ).fetchall()
+    }
+    context_keys = (
+        "contract_start_date",
+        "contract_execution_term",
+        "region",
+        "delivery_place",
+        "delivery_days",
+        "etp_name",
+    )
+    for row in rows:
+        page = pages.get(str(row.get("purchase_number") or "").strip()) or {}
+        if page.get("source_url"):
+            row["source_url"] = page["source_url"]
+        row["fetched_at_utc"] = page.get("fetched_at_utc")
+        row["html_ok"] = page.get("html_ok")
+        row["html_error_text"] = page.get("html_error_text")
+        row["html_text"] = page.get("html_text") or ""
+        for key in context_keys:
+            if page.get(key):
+                row[key] = page[key]
 
 
 def offer_matching_ktru_rows(
@@ -4076,64 +6163,39 @@ def offer_matching_ktru_rows(
     ktru_query: str | None = None,
     ktru_queries: list[str] | None = None,
     catalog_ktru_codes: list[str] | None = None,
+    etp_name: str | None = None,
     pub_from_utc: str | None = None,
     pub_to_utc: str | None = None,
 ) -> list[dict[str, Any]]:
     if not path.is_file():
         return []
-    where_sql, params = _offer_matching_filter_sql(
+    union_sql, params = _offer_matching_union_sql(
         purchase_number=purchase_number,
         line_key=line_key,
         ktru_query=ktru_query,
         ktru_queries=ktru_queries,
         catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_name,
         pub_from_utc=pub_from_utc,
         pub_to_utc=pub_to_utc,
     )
     params.extend([max(1, int(limit)), max(0, int(offset))])
     with connect(path) as conn:
-        rows = conn.execute(
+        raw_rows = conn.execute(
             f"""
-            SELECT
-              l.line_key,
-              r.reg_number AS purchase_number,
-              l.ktru_code,
-              l.position_display_name,
-              l.unit_text,
-              l.quantity_text,
-              l.price_per_unit_text,
-              l.line_sum_text,
-              l.characteristics_count,
-              l.characteristics_json,
-              l.parsed_at_utc,
-              COALESCE(p.source_url, r.link) AS source_url,
-              p.fetched_at_utc,
-              p.ok AS html_ok,
-              p.error_text AS html_error_text,
-              p.contract_start_date,
-              p.contract_execution_term,
-              p.region,
-              p.delivery_place,
-              p.delivery_days,
-              p.html_text,
-              r.pub_date_utc,
-              r.first_seen_at_utc,
-              r.customer_name,
-              r.price_text,
-              r.stage_text
-            FROM eis_rss_observations r
-            LEFT JOIN notice_html_pages p ON p.purchase_number = r.reg_number
-            LEFT JOIN notice_html_ktru_lines l ON l.purchase_number = r.reg_number AND p.ok = 1
-            WHERE 1 = 1{where_sql}
-            ORDER BY r.pub_date_utc DESC, r.first_seen_at_utc DESC, l.line_key ASC
+            SELECT * FROM (
+              {union_sql}
+            ) q
+            ORDER BY pub_date_utc DESC, first_seen_at_utc DESC, line_key ASC
             LIMIT ? OFFSET ?
             """,
             params,
         ).fetchall()
+        out_rows = [dict(row) for row in raw_rows]
+        _merge_offer_matching_page_meta(conn, out_rows)
     out: list[dict[str, Any]] = []
     html_parse_cache: dict[str, list[KtruPurchaseLine]] = {}
-    for row in rows:
-        d = dict(row)
+    for d in out_rows:
         try:
             d["characteristics"] = json.loads(str(d.get("characteristics_json") or "[]"))
         except json.JSONDecodeError:
@@ -4144,13 +6206,21 @@ def offer_matching_ktru_rows(
         else:
             d["html_status"] = "not_loaded"
         _apply_fresh_html_characteristics(d, parse_cache=html_parse_cache)
-        context_keys = ("contract_start_date", "contract_execution_term", "region", "delivery_place", "delivery_days")
+        context_keys = (
+            "contract_start_date",
+            "contract_execution_term",
+            "region",
+            "delivery_place",
+            "delivery_days",
+            "etp_name",
+        )
         if any(not d.get(k) for k in context_keys):
             context = parse_notice_common_info_context(str(d.get("html_text") or ""))
             for key in context_keys:
                 if not d.get(key):
                     d[key] = context.get(key, "")
         d.pop("html_text", None)
+        d["etp_name"] = str(d.get("etp_name") or "").strip()
         d["pub_display_msk"] = _display_msk(d.get("pub_date_utc"))
         d["first_seen_display_msk"] = _display_msk(d.get("first_seen_at_utc"))
         d["fetched_display_msk"] = _display_msk(d.get("fetched_at_utc"))
@@ -4164,30 +6234,46 @@ def offer_matching_ktru_count(
     ktru_query: str | None = None,
     ktru_queries: list[str] | None = None,
     catalog_ktru_codes: list[str] | None = None,
+    etp_name: str | None = None,
     pub_from_utc: str | None = None,
     pub_to_utc: str | None = None,
 ) -> int:
     if not path.is_file():
         return 0
-    where_sql, params = _offer_matching_filter_sql(
+    union_sql, params = _offer_matching_union_sql(
         ktru_query=ktru_query,
         ktru_queries=ktru_queries,
         catalog_ktru_codes=catalog_ktru_codes,
+        etp_name=etp_name,
         pub_from_utc=pub_from_utc,
         pub_to_utc=pub_to_utc,
     )
     with connect(path) as conn:
         row = conn.execute(
             f"""
-            SELECT COUNT(*) AS cnt
-            FROM eis_rss_observations r
-            LEFT JOIN notice_html_pages p ON p.purchase_number = r.reg_number
-            LEFT JOIN notice_html_ktru_lines l ON l.purchase_number = r.reg_number AND p.ok = 1
-            WHERE 1 = 1{where_sql}
+            SELECT COUNT(*) AS cnt FROM (
+              {union_sql}
+            ) q
             """,
             params,
         ).fetchone()
     return int(row["cnt"] if row is not None else 0)
+
+
+def list_offer_matching_etp_names(path: Path) -> list[str]:
+    """Distinct ETP names from RSS observations (HTML etp is copied onto RSS)."""
+    if not path.is_file():
+        return []
+    with connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT TRIM(etp_name) AS etp_name
+            FROM eis_rss_observations
+            WHERE TRIM(COALESCE(etp_name, '')) <> ''
+            ORDER BY etp_name COLLATE NOCASE
+            """
+        ).fetchall()
+    return [str(r["etp_name"]).strip() for r in rows if str(r["etp_name"] or "").strip()]
 
 
 def _period_clause(days: int, alias: str = "n") -> tuple[str, str]:
@@ -6081,12 +8167,15 @@ def rss_vs_getdocs_recent(path: Path, *, limit: int = 50) -> list[dict[str, Any]
               r.detection_window_end_utc,
               n.first_seen_at_utc AS getdocs_first_seen_at_utc,
               n.publish_dt_utc AS getdocs_publish_dt_utc,
+              html_page.etp_name AS etp_name,
               html_line.position_display_name AS html_position_name,
               html_line.characteristics_json AS html_characteristics_json,
               xml_line.position_display_name AS xml_position_name,
               xml_line.characteristics_json AS xml_characteristics_json
             FROM eis_rss_observations r
             LEFT JOIN notice_events n ON n.purchase_number = r.reg_number
+            LEFT JOIN notice_html_pages html_page
+              ON html_page.purchase_number = r.reg_number AND html_page.ok = 1
             LEFT JOIN (
               SELECT purchase_number, position_display_name, characteristics_json
               FROM (
@@ -6113,6 +8202,7 @@ def rss_vs_getdocs_recent(path: Path, *, limit: int = 50) -> list[dict[str, Any]
         ).fetchall()
 
     out: list[dict[str, Any]] = []
+    missing_etp: list[str] = []
     for row in rows:
         d = dict(row)
         pub_dt = _parse_utc(d.get("rss_pub_date_utc"))
@@ -6152,6 +8242,11 @@ def rss_vs_getdocs_recent(path: Path, *, limit: int = 50) -> list[dict[str, Any]
         chars_json = str(d.get("html_characteristics_json") or d.get("xml_characteristics_json") or "")
         d["position_display_name"] = position_name
         d["trade_mark"] = _trade_mark_from_characteristics_json(chars_json)
+        reg = str(d.get("reg_number") or "").strip()
+        d["link"] = normalize_eis_notice_link(str(d.get("link") or ""), reg_number=reg)
+        d["etp_name"] = str(d.get("etp_name") or "").strip()
+        if not d["etp_name"] and reg:
+            missing_etp.append(reg)
         for key in (
             "html_position_name",
             "html_characteristics_json",
@@ -6160,7 +8255,51 @@ def rss_vs_getdocs_recent(path: Path, *, limit: int = 50) -> list[dict[str, Any]
         ):
             d.pop(key, None)
         out.append(d)
+
+    if missing_etp:
+        etp_by_pn = _backfill_etp_names(path, missing_etp)
+        for d in out:
+            pn = str(d.get("reg_number") or "").strip()
+            if not d.get("etp_name") and pn in etp_by_pn:
+                d["etp_name"] = etp_by_pn[pn]
     return out
+
+
+def _backfill_etp_names(path: Path, purchase_numbers: list[str]) -> dict[str, str]:
+    """Parse etp_name from stored HTML for notices that still have an empty column."""
+    pns = [str(x).strip() for x in purchase_numbers if str(x).strip()]
+    if not pns or not path.is_file():
+        return {}
+    placeholders = ",".join("?" for _ in pns)
+    with connect(path) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT purchase_number, html_text, etp_name
+            FROM notice_html_pages
+            WHERE purchase_number IN ({placeholders})
+              AND ok = 1
+              AND COALESCE(html_text, '') <> ''
+            """,
+            pns,
+        ).fetchall()
+        found: dict[str, str] = {}
+        for row in rows:
+            pn = str(row["purchase_number"] or "").strip()
+            existing = str(row["etp_name"] or "").strip()
+            if existing:
+                found[pn] = existing
+                continue
+            ctx = parse_notice_common_info_context(str(row["html_text"] or ""))
+            etp = str(ctx.get("etp_name") or "").strip()
+            if not etp:
+                continue
+            conn.execute(
+                "UPDATE notice_html_pages SET etp_name = ? WHERE purchase_number = ?",
+                (etp, pn),
+            )
+            found[pn] = etp
+        conn.commit()
+    return found
 
 
 def last_rss_poll_run(path: Path) -> dict[str, Any] | None:

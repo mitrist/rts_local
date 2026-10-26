@@ -363,6 +363,19 @@ def run_poll_once(*, force: bool = False) -> dict[str, Any]:
             force=force,
             senders=senders or None,
         )
+        try:
+            from auto_monitor_draft import drain_summary_as_dict, process_auto_monitor_draft_queue
+
+            drain = process_auto_monitor_draft_queue(
+                meta_dir(),
+                analytics_db(),
+                project_root=project_root(),
+                limit=5,
+            )
+            result = {**result, "auto_monitor_draft": drain_summary_as_dict(drain)}
+        except Exception as exc:
+            _LOG.warning("auto_monitor_draft queue drain failed: %s", exc)
+            result = {**result, "auto_monitor_draft_error": str(exc)[:300]}
     except Exception as exc:
         _LOG.exception("PP monitor poll crashed")
         result = {"ok": False, "reason": "internal_error", "error": str(exc)[:500]}

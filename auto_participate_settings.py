@@ -22,6 +22,7 @@ def settings_path(meta_dir: Path) -> Path:
 def default_profile_rules() -> dict[str, Any]:
     return {
         "enabled": False,
+        "auto_publish": False,
         "min_purchase_amount": 200000,
         "ktru_mode": DEFAULT_KTRU_MODE,
         "ktru_codes": [],
@@ -32,7 +33,55 @@ def default_profile_rules() -> dict[str, Any]:
 
 def default_settings() -> dict[str, Any]:
     profiles = {name: default_profile_rules() for name in list_known_profiles()}
-    return {"version": SETTINGS_VERSION, "enabled": False, "profiles": profiles}
+    return {
+        "version": SETTINGS_VERSION,
+        "enabled": False,
+        "allowed_etp_names": [],
+        "profiles": profiles,
+    }
+
+
+def parse_etp_names_list(raw: Any) -> list[str]:
+    """Normalize a list or multiline/comma-separated string of ETP names."""
+    items: list[str] = []
+    if isinstance(raw, list):
+        items = [str(x).strip() for x in raw if str(x).strip()]
+    elif isinstance(raw, str):
+        items = [x.strip() for x in raw.replace(",", "\n").splitlines() if x.strip()]
+    # Preserve order, drop duplicates (casefold).
+    seen: set[str] = set()
+    out: list[str] = []
+    for name in items:
+        key = " ".join(name.casefold().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(name)
+    return out
+
+
+def allowed_etp_names(settings: dict[str, Any]) -> list[str]:
+    return parse_etp_names_list(settings.get("allowed_etp_names"))
+
+
+def normalize_etp_name(value: str | None) -> str:
+    return " ".join(str(value or "").casefold().split())
+
+
+def etp_name_allowed(etp_name: str | None, allowed: list[str] | None) -> bool:
+    """Empty allowlist means all platforms are allowed."""
+    names = [x for x in (allowed or []) if str(x).strip()]
+    if not names:
+        return True
+    needle = normalize_etp_name(etp_name)
+    if not needle:
+        return False
+    allowed_norm = {normalize_etp_name(x) for x in names}
+    return needle in allowed_norm
+
+
+def etp_names_text_from_settings(settings: dict[str, Any]) -> str:
+    return "\n".join(allowed_etp_names(settings))
 
 
 def global_enabled(settings: dict[str, Any]) -> bool:
@@ -67,6 +116,7 @@ def load_settings(path: Path) -> dict[str, Any]:
                 base["profiles"][name] = parse_profile_rules(merged, profile=name)
     base["version"] = SETTINGS_VERSION
     base["enabled"] = bool(data.get("enabled", False))
+    base["allowed_etp_names"] = parse_etp_names_list(data.get("allowed_etp_names"))
     return base
 
 
@@ -75,6 +125,7 @@ def save_settings(path: Path, payload: dict[str, Any]) -> None:
     out = {
         "version": SETTINGS_VERSION,
         "enabled": bool(payload.get("enabled", False)),
+        "allowed_etp_names": parse_etp_names_list(payload.get("allowed_etp_names")),
         "profiles": {},
         "saved_at_utc": payload.get("saved_at_utc"),
     }
@@ -120,6 +171,7 @@ def parse_profile_rules(raw: dict[str, Any], *, profile: str = "") -> dict[str, 
         max_hour = base["max_per_hour"]
     return {
         "enabled": bool(enabled),
+        "auto_publish": bool(raw.get("auto_publish", base["auto_publish"])),
         "min_purchase_amount": min_amount,
         "ktru_mode": ktru_mode,
         "ktru_codes": codes,
@@ -171,6 +223,7 @@ def parse_form_profile_rules(form: dict[str, Any]) -> dict[str, Any]:
     return parse_profile_rules(
         {
             "enabled": form.get("enabled") in (True, "1", "on", "true", "yes"),
+            "auto_publish": form.get("auto_publish") in (True, "1", "on", "true", "yes"),
             "min_purchase_amount": min_amount,
             "ktru_mode": ktru_mode,
             "ktru_codes": codes,
@@ -196,6 +249,7 @@ def form_from_profile_rules(rules: dict[str, Any]) -> dict[str, str]:
     codes = rules.get("ktru_codes") or []
     return {
         "enabled": "1" if rules.get("enabled") else "",
+        "auto_publish": "1" if rules.get("auto_publish") else "",
         "min_purchase_amount": amount_str,
         "ktru_mode": str(rules.get("ktru_mode") or DEFAULT_KTRU_MODE),
         "ktru_codes_text": "\n".join(codes) if isinstance(codes, list) else "",
@@ -224,4 +278,11 @@ def apply_admin_global_enabled(settings: dict[str, Any], *, enabled: bool) -> di
         merged = {**raw, "enabled": enabled}
         profiles[name] = parse_profile_rules(merged, profile=name)
     out["profiles"] = profiles
+    return out
+
+
+def apply_admin_allowed_etp_names(settings: dict[str, Any], *, etp_names_text: str) -> dict[str, Any]:
+    """Сохранить список площадок автоучастия (пусто = все площадки)."""
+    out = deepcopy(settings)
+    out["allowed_etp_names"] = parse_etp_names_list(etp_names_text)
     return out

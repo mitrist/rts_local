@@ -56,12 +56,26 @@ class CountryOriginRow:
 
 
 def default_country_origin_path(project_root: Path | None = None) -> Path:
+    """Path to country_origin.csv.
+
+    Priority:
+    1. ``RTS_KTRU_COUNTRY_FILE`` (absolute or relative to CWD)
+    2. ``<project_root>/country_origin.csv`` (canonical)
+    3. Legacy ``<project_root>/КТРУ для ПП/Country_of_origin/country_origin.csv``
+       if the canonical file is missing but the legacy one exists.
+    """
     raw = os.environ.get("RTS_KTRU_COUNTRY_FILE", "").strip()
     if raw:
         p = Path(raw)
         return p if p.is_absolute() else (Path.cwd() / p).resolve()
     root = (project_root or Path(__file__).resolve().parent).resolve()
-    return root / "КТРУ для ПП" / "Country_of_origin" / "country_origin.csv"
+    canonical = root / "country_origin.csv"
+    if canonical.is_file():
+        return canonical
+    legacy = root / "КТРУ для ПП" / "Country_of_origin" / "country_origin.csv"
+    if legacy.is_file():
+        return legacy
+    return canonical
 
 
 def country_from_name(name: str) -> CountryOfOrigin:
@@ -268,8 +282,19 @@ def national_mode_groups_for_country(
     return ([], [])
 
 
-def apply_country_to_draft_item(item: dict[str, Any], country: CountryOfOrigin) -> None:
-    item["countriesOfOrigin"] = [{"code": country.code, "name": country.name}]
-    national, software = national_mode_groups_for_country(country)
-    item["nationalModeInfoGroups"] = national
-    item["softwareNationalModeInfoGroups"] = software
+def apply_country_to_draft_item(
+    item: dict[str, Any],
+    country: CountryOfOrigin,
+    *,
+    find_item: dict[str, Any] | None = None,
+    info_types_payload: dict[str, Any] | None = None,
+) -> str:
+    """Apply country + national mode. Prefer find copy / info-types when given."""
+    from rts_national_mode import apply_national_mode_to_draft_item
+
+    return apply_national_mode_to_draft_item(
+        item,
+        country,
+        find_item=find_item,
+        info_types_payload=info_types_payload,
+    )

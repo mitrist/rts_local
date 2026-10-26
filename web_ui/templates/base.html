@@ -14,7 +14,7 @@
       }
     })();
   </script>
-  <link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}?v=15">
+  <link rel="stylesheet" href="{{ request.url_for('static', path='styles.css') }}?v=26">
 </head>
 <body>
   <div class="layout">
@@ -32,26 +32,61 @@
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h10"></path><path d="M4 12h8"></path><path d="M4 17h7"></path><path d="m15 15 2 2 4-5"></path></svg></span>
           <span class="nav-label">Подбор предложений</span>
         </a>
-        <a href="{{ request.url_for('page_day_summary') }}" class="{{ 'active' if active == 'day_summary' else '' }}" title="Итоги дня">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3v3"></path><path d="M16 3v3"></path><path d="M4 8h16"></path><path d="M6 6h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"></path><path d="M9 12h2"></path><path d="M13 12h2"></path></svg></span>
-          <span class="nav-label">Итоги дня</span>
-        </a>
-        <a href="{{ request.url_for('page_preoffers') }}" class="{{ 'active' if active == 'preoffers' else '' }}" title="Справочник предложений">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M8 4v16"></path><path d="M11 8h4"></path><path d="M11 12h4"></path></svg></span>
-          <span class="nav-label">Справочник предложений</span>
-        </a>
         <a href="{{ request.url_for('page_pp_drafts') }}" class="{{ 'active' if active == 'pp_drafts' else '' }}" title="Черновики ПП">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M10 13h4"></path><path d="M10 17h4"></path><path d="M8 13h.01"></path><path d="M8 17h.01"></path></svg></span>
           <span class="nav-label">Черновики ПП</span>
         </a>
-        <a href="{{ request.url_for('page_pp_monitor_samples') }}" class="{{ 'active' if active == 'pp_monitor_samples' else '' }}" title="Реестр предложений">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></span>
-          <span class="nav-label">Реестр предложений</span>
+        <a href="{{ request.url_for('page_pp_create') }}" class="{{ 'active' if active == 'pp_create' else '' }}" title="Создать ПП">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><path d="M14 2v6h6"></path><path d="M12 18v-6"></path><path d="M9 15h6"></path></svg></span>
+          <span class="nav-label">Создать ПП</span>
         </a>
-        <a href="{{ request.url_for('page_eis_pp_link') }}" class="{{ 'active' if active == 'eis_pp_link' else '' }}" title="Связь ЕИС-ПП">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path><path d="M3 3h6v6H3z"></path><path d="M15 15h6v6h-6z"></path><path d="M14 3h7M3 14h7"></path></svg></span>
-          <span class="nav-label">Связь ЕИС-ПП</span>
+        <a href="{{ request.url_for('page_pp_core') }}" class="{{ 'active' if active == 'pp_core' else '' }}" title="Ядро КТРУ">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 7h16"></path><path d="M4 12h16"></path><path d="M4 17h10"></path><path d="M16 16l2 2 4-4"></path></svg></span>
+          <span class="nav-label">Ядро КТРУ</span>
         </a>
+        <a href="{{ request.url_for('page_pp_virtual') }}" class="{{ 'active' if active == 'pp_virtual' else '' }}" title="Виртуальные ПП">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 4h7v7H4z"></path><path d="M13 4h7v7h-7z"></path><path d="M4 13h7v7H4z"></path><path d="M15 15h3v3h-3z"></path></svg></span>
+          <span class="nav-label">Виртуальные ПП</span>
+        </a>
+        <a href="{{ request.url_for('page_pp_virtual_events') }}" class="{{ 'active' if active == 'pp_virtual_events' else '' }}" title="Журнал сопоставления">
+          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path></svg></span>
+          <span class="nav-label">Журнал сопоставления</span>
+        </a>
+        <details class="nav-stack{% if active in ['day_summary', 'preoffers', 'pp_monitor_samples', 'eis_pp_link', 'rts_pp_monitor', 'pp_chain'] %} nav-stack-active{% endif %}" id="nav-stack-registries" {% if active in ['day_summary', 'preoffers', 'pp_monitor_samples', 'eis_pp_link', 'rts_pp_monitor', 'pp_chain'] %}open{% endif %}>
+          <summary class="nav-stack-toggle" title="Реестры">
+            <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path></svg></span>
+            <span class="nav-label">Реестры</span>
+            <span class="nav-stack-chevron" aria-hidden="true">›</span>
+          </summary>
+          <div class="nav-stack-items">
+            <a href="{{ request.url_for('page_day_summary') }}" class="{{ 'active' if active == 'day_summary' else '' }}" title="Итоги дня">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8 3v3"></path><path d="M16 3v3"></path><path d="M4 8h16"></path><path d="M6 6h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2z"></path><path d="M9 12h2"></path><path d="M13 12h2"></path></svg></span>
+              <span class="nav-label">Итоги дня</span>
+            </a>
+            <a href="{{ request.url_for('page_preoffers') }}" class="{{ 'active' if active == 'preoffers' else '' }}" title="Справочник предложений">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"></path><path d="M8 4v16"></path><path d="M11 8h4"></path><path d="M11 12h4"></path></svg></span>
+              <span class="nav-label">Справочник предложений</span>
+            </a>
+            <a href="{{ request.url_for('page_pp_monitor_samples') }}" class="{{ 'active' if active == 'pp_monitor_samples' else '' }}" title="Реестр предложений">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg></span>
+              <span class="nav-label">Реестр предложений</span>
+            </a>
+            <a href="{{ request.url_for('page_eis_pp_link') }}" class="{{ 'active' if active == 'eis_pp_link' else '' }}" title="Связь ЕИС-ПП">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M7 7h10v10H7z"></path><path d="M3 3h6v6H3z"></path><path d="M15 15h6v6h-6z"></path><path d="M14 3h7M3 14h7"></path></svg></span>
+              <span class="nav-label">Связь ЕИС-ПП</span>
+            </a>
+            {% if settings_admin %}
+            <a href="{{ request.url_for('page_rts_pp_monitor') }}" class="{{ 'active' if active == 'rts_pp_monitor' else '' }}" title="Монитор ПП РТС">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 3h18v4H3z"></path><path d="M7 11h10v10H7z"></path><path d="M11 15h2"></path></svg></span>
+              <span class="nav-label">Монитор ПП РТС</span>
+            </a>
+            <a href="{{ request.url_for('page_pp_monitor_chain') }}" class="{{ 'active' if active == 'pp_chain' else '' }}" title="Цепочка ПП">
+              <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v18"></path><path d="M5 8h4v8H5z"></path><path d="M15 6h4v12h-4z"></path></svg></span>
+              <span class="nav-label">Цепочка ПП</span>
+            </a>
+            {% endif %}
+          </div>
+        </details>
         {% if settings_admin %}
         <a href="{{ request.url_for('page_admin') }}" class="{{ 'active' if active == 'admin' else '' }}" title="Админка">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7z"></path><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.26.604.852.997 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg></span>
@@ -60,14 +95,6 @@
         <a href="{{ request.url_for('page_auto_participate') }}" class="{{ 'active' if active == 'auto_participate' else '' }}" title="Авто-участие">
           <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M13 2 3 14h7l-1 8 10-12h-7l1-8z"></path></svg></span>
           <span class="nav-label">Авто-участие</span>
-        </a>
-        <a href="{{ request.url_for('page_rts_pp_monitor') }}" class="{{ 'active' if active == 'rts_pp_monitor' else '' }}" title="Монитор ПП РТС">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M3 3h18v4H3z"></path><path d="M7 11h10v10H7z"></path><path d="M11 15h2"></path></svg></span>
-          <span class="nav-label">Монитор ПП РТС</span>
-        </a>
-        <a href="{{ request.url_for('page_pp_monitor_chain') }}" class="{{ 'active' if active == 'pp_chain' else '' }}" title="Цепочка ПП">
-          <span class="nav-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M12 3v18"></path><path d="M5 8h4v8H5z"></path><path d="M15 6h4v12h-4z"></path></svg></span>
-          <span class="nav-label">Цепочка ПП</span>
         </a>
         {% endif %}
         <a href="{{ request.url_for('page_notification_settings') }}" class="{{ 'active' if active == 'notification_settings' else '' }}" title="Настройка уведомлений">
@@ -90,7 +117,7 @@
       </div>
       {% endif %}
     </aside>
-    <div class="main {{ 'main-wide' if active in ['analytics', 'ktru_analytics', 'shelf_purchases', 'offer_matching', 'day_summary', 'preoffers', 'pp_drafts', 'pp_monitor_samples', 'eis_pp_link', 'rts_pp_monitor'] else '' }}">
+    <div class="main {{ 'main-wide' if active in ['analytics', 'ktru_analytics', 'shelf_purchases', 'offer_matching', 'day_summary', 'preoffers', 'pp_drafts', 'pp_create', 'pp_monitor_samples', 'eis_pp_link', 'rts_pp_monitor', 'pp_virtual', 'pp_virtual_events'] else '' }}">
       {% block content %}{% endblock %}
     </div>
   </div>
@@ -111,8 +138,30 @@
       });
       sync();
     })();
+    (function () {
+      var el = document.getElementById("nav-stack-registries");
+      if (!el) return;
+      var key = "rtsNavStackRegistries";
+      if (!el.classList.contains("nav-stack-active")) {
+        if (localStorage.getItem(key) === "1") el.open = true;
+        if (localStorage.getItem(key) === "0") el.open = false;
+      }
+      el.addEventListener("toggle", function () {
+        localStorage.setItem(key, el.open ? "1" : "0");
+      });
+    })();
   </script>
   <script src="{{ request.url_for('static', path='theme.js') }}?v=1"></script>
+  {% if web_user and pp_publish_enabled %}
+  <script>window.__PP_PUBLISH_ENABLED = true;</script>
+  <script src="https://www.cryptopro.ru/sites/default/files/products/cades/cadesplugin_api.js"></script>
+  <script src="{{ request.url_for('static', path='pp_publish_sign.js') }}?v=8"></script>
+  <script>
+    if (window.RtsPpPublish && window.RtsPpPublish.watchPending) {
+      window.RtsPpPublish.watchPending({ intervalMs: 20000 });
+    }
+  </script>
+  {% endif %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

@@ -13,6 +13,9 @@ from rts_cookie_ingest import cookie_has_auth_markers
 from rts_invites_poll import load_cookie_header
 
 OFFERS_BASE = "https://offers.rts-tender.ru/api/v1/OfferPriceListItem"
+TRADES_BASE = "https://offers.rts-tender.ru/api/v1/Trades"
+NATIONAL_MODE_INFO_TYPES_URL = f"{OFFERS_BASE}/national-mode/info-types/"
+CREATION_DATA_URL = f"{TRADES_BASE}/offer-price-list-item-creation-data"
 KTRU_SEARCH_URL = "https://offers.rts-tender.ru/api-gateway/dictionary/api/v1/Ktru/search"
 DRAFT_SEARCH_URL = (
     "https://platform.rts-tender.ru/api-gateway/preliminary-offers/"
@@ -23,6 +26,10 @@ DRAFT_EDIT_URL = (
 )
 DRAFT_EDIT_BY_ID_URL = (
     "https://offers.rts-tender.ru/supplier/price-lists/positions/offer-item/edit/{draft_id}"
+)
+NOTICE_OFFER_EDIT_URL = (
+    "https://offers.rts-tender.ru/supplier/price-lists/offer/edit"
+    "?notificationNumber={notification_number}&starNotificationNumber={star}"
 )
 OFFERS_DRAFTS_URL = "https://offers.rts-tender.ru/supplier/price-lists/positions"
 
@@ -155,7 +162,9 @@ def _request_json(
     *,
     cookie: str,
     json_body: dict[str, Any] | list[Any] | None = None,
+    params: dict[str, Any] | None = None,
     timeout: float = _DEFAULT_TIMEOUT,
+    allow_empty: bool = False,
 ) -> Any:
     try:
         resp = requests.request(
@@ -163,6 +172,7 @@ def _request_json(
             url,
             headers=offers_headers(cookie),
             json=json_body,
+            params=params,
             timeout=timeout,
         )
     except requests.RequestException as exc:
@@ -172,6 +182,14 @@ def _request_json(
             "Сессия РТС истекла. Обновите cookie через расширение.",
             reason="session_expired",
             detail={"http_status": resp.status_code, "body": (resp.text or "")[:500]},
+        )
+    if resp.status_code == 204:
+        if allow_empty:
+            return {}
+        raise RtsPpApiError(
+            "РТС API 204 No Content (пустой ответ).",
+            reason="api_empty",
+            detail={"http_status": 204, "url": url},
         )
     if resp.status_code != 200:
         raise RtsPpApiError(
@@ -199,13 +217,99 @@ def _pick_ktru_item(page: list[Any], code: str) -> dict[str, Any] | None:
     return None
 
 
+def _extract_ktru_from_search(data: Any, code: str) -> dict[str, Any] | None:
+    """LK may return a single KTRU object or a paged ``{page:[...]}`` envelope."""
+    if isinstance(data, list):
+        return _pick_ktru_item(data, code)
+    if not isinstance(data, dict):
+        return None
+    if str(data.get("code") or "").strip() == code and (
+        "characteristics" in data or "okeis" in data or "okpd2" in data or "version" in data
+    ):
+        return data
+    for key in ("page", "items", "result", "data"):
+        nested = data.get(key)
+        if isinstance(nested, list):
+            found = _pick_ktru_item(nested, code)
+            if found:
+                return found
+        if isinstance(nested, dict):
+            found = _extract_ktru_from_search(nested, code)
+            if found:
+                return found
+    return None
+
+
+def _ktru_search_items(data: Any) -> list[dict[str, Any]]:
+    """Flatten Ktru/search JSON (single item, page[], or nested envelopes)."""
+    out: list[dict[str, Any]] = []
+    if isinstance(data, list):
+        for row in data:
+            out.extend(_ktru_search_items(row))
+        return out
+    if not isinstance(data, dict):
+        return []
+    code = str(data.get("code") or "").strip()
+    if code and (
+        "characteristics" in data or "okeis" in data or "okpd2" in data or "version" in data or "name" in data
+    ):
+        out.append(data)
+    for key in ("page", "items", "result", "data"):
+        nested = data.get(key)
+        if isinstance(nested, (list, dict)):
+            out.extend(_ktru_search_items(nested))
+    seen: set[str] = set()
+    unique: list[dict[str, Any]] = []
+    for item in out:
+        code = str(item.get("code") or "").strip()
+        if not code or code in seen:
+            continue
+        seen.add(code)
+        unique.append(item)
+    return unique
+
+
+def search_ktru_by_name(
+    cookie: str,
+    query: str,
+    *,
+    timeout: float = _DEFAULT_TIMEOUT,
+    take: int = 20,
+) -> list[dict[str, Any]]:
+    """Search KTRU dictionary by name or code substring. Returns raw items (may be partial)."""
+    q = str(query or "").strip()
+    if not q:
+        return []
+    size = max(1, min(int(take), 50))
+    bodies: list[dict[str, Any]] = [
+        {"code": "", "name": q, "skip": 0, "take": size, "sorting": []},
+        {"code": q, "name": "", "skip": 0, "take": size, "sorting": []},
+        {"searchText": q, "page": 0, "size": size, "onlyActual": True},
+    ]
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for body in bodies:
+        data = _request_json("POST", KTRU_SEARCH_URL, cookie=cookie, json_body=body, timeout=timeout)
+        for item in _ktru_search_items(data):
+            code = str(item.get("code") or "").strip()
+            if not code or code in seen:
+                continue
+            seen.add(code)
+            merged.append(item)
+            if len(merged) >= size:
+                return merged
+    return merged
+
+
 def search_ktru(cookie: str, ktru_code: str, *, timeout: float = _DEFAULT_TIMEOUT) -> dict[str, Any]:
     code = str(ktru_code or "").strip()
     if not code:
         raise RtsPpApiError("Код КТРУ не задан.", reason="ktru_not_found")
 
     okpd_prefix = code.rsplit("-", 1)[0] if "-" in code else ""
+    # Primary contract matches browser DevTools dumps (skip/take).
     bodies: list[dict[str, Any]] = [
+        {"code": code, "name": "", "skip": 0, "take": 10, "sorting": []},
         {"code": code, "page": 0, "size": 20, "onlyActual": True},
         {"code": code, "page": 0, "size": 20, "onlyActual": False},
         {"searchText": code, "page": 0, "size": 50, "onlyActual": True},
@@ -216,9 +320,7 @@ def search_ktru(cookie: str, ktru_code: str, *, timeout: float = _DEFAULT_TIMEOU
 
     for body in bodies:
         data = _request_json("POST", KTRU_SEARCH_URL, cookie=cookie, json_body=body, timeout=timeout)
-        if not isinstance(data, dict):
-            raise RtsPpApiError("Некорректный ответ поиска КТРУ.", reason="api_error")
-        item = _pick_ktru_item(data.get("page") or [], code)
+        item = _extract_ktru_from_search(data, code)
         if item:
             return item
 
@@ -354,6 +456,11 @@ def _resolve_value_option(
             oq = str(opt.get("qualityDescription") or "").strip()
             if oq and (qd in oq.lower() or oq.lower() in qd):
                 return opt
+    vc = str(cv.get("valueCode") or "").strip()
+    if vc:
+        for opt in options:
+            if str(opt.get("valueCode") or "").strip() == vc:
+                return opt
     if cv.get("minValue") or cv.get("maxValue") or cv.get("concreteValue"):
         for opt in options:
             if _numeric_option_exact_match(cv, opt):
@@ -378,6 +485,7 @@ def _characteristic_value_for_api(
     ch = characteristic or {}
     value_id = None
     matched = _resolve_value_option(cv, options) if options else None
+    src = matched if isinstance(matched, dict) else cv
     if matched is not None:
         value_id = matched.get("id")
     if value_id is None:
@@ -389,25 +497,48 @@ def _characteristic_value_for_api(
                     break
         elif raw_id is not None and not options:
             value_id = raw_id
+    if value_id is not None and options:
+        allowed = {_int_id(opt.get("id")) for opt in options}
+        if _int_id(value_id) not in allowed:
+            value_id = None
+    char_id = _int_id(
+        ch.get("id"),
+        cv.get("characteristicId"),
+        (matched or {}).get("characteristicId") if isinstance(matched, dict) else None,
+    )
     out: dict[str, Any] = {
-        "qualityDescription": cv.get("qualityDescription"),
+        "qualityDescription": src.get("qualityDescription")
+        if src.get("qualityDescription") is not None
+        else cv.get("qualityDescription"),
         "concreteValue": cv.get("concreteValue"),
         "minValue": cv.get("minValue"),
         "maxValue": cv.get("maxValue"),
         "productCharacteristic": cv.get("productCharacteristic"),
         "minMathNotation": cv.get("minMathNotation"),
         "maxMathNotation": cv.get("maxMathNotation"),
-        "characteristicId": ch.get("id"),
         "characteristicCode": ch.get("code") if ch.get("code") is not None else cv.get("characteristicCode"),
         "characteristicName": ch.get("name") if ch.get("name") is not None else cv.get("characteristicName"),
-        "valueCode": cv.get("valueCode"),
+        "valueCode": src.get("valueCode") if src.get("valueCode") is not None else cv.get("valueCode"),
         "okeiCode": cv.get("okeiCode") if cv.get("okeiCode") is not None else okei.get("code", ""),
         "okeiFullName": cv.get("okeiFullName", okei.get("fullName")),
         "valueFormatId": cv.get("valueFormatId", fmt.get("id")),
     }
+    if char_id is not None:
+        out["characteristicId"] = char_id
     if value_id is not None:
         out["id"] = int(value_id)
     return out
+
+
+def _int_id(*candidates: Any) -> int | None:
+    for raw in candidates:
+        if raw is None or raw == "":
+            continue
+        try:
+            return int(raw)
+        except (TypeError, ValueError):
+            continue
+    return None
 
 
 def _map_characteristic_value(cv: dict[str, Any]) -> dict[str, Any]:
@@ -415,14 +546,24 @@ def _map_characteristic_value(cv: dict[str, Any]) -> dict[str, Any]:
 
 
 def _fix_characteristic_value_ids(item: dict[str, Any], ktru_item: dict[str, Any]) -> None:
+    tpl_by_code = {
+        str(row.get("code") or "").strip(): row
+        for row in (ktru_item.get("characteristics") or [])
+        if isinstance(row, dict) and str(row.get("code") or "").strip()
+    }
     for ch in item.get("ktruCharacteristics") or []:
         if not isinstance(ch, dict):
             continue
-        options = _search_char_options(ktru_item, str(ch.get("code") or ""))
+        code = str(ch.get("code") or "").strip()
+        options = _search_char_options(ktru_item, code)
+        tpl = tpl_by_code.get(code) or {}
+        parent = dict(ch)
+        if _int_id(parent.get("id")) is None and _int_id(tpl.get("id")) is not None:
+            parent["id"] = tpl.get("id")
         fixed: list[dict[str, Any]] = []
         for cv in ch.get("characteristicValues") or []:
             if isinstance(cv, dict):
-                fixed.append(_characteristic_value_for_api(cv, options=options, characteristic=ch))
+                fixed.append(_characteristic_value_for_api(cv, options=options, characteristic=parent))
         if fixed:
             ch["characteristicValues"] = fixed
 
@@ -496,6 +637,202 @@ def create_draft(cookie: str, payload: dict[str, Any], *, timeout: float = _DEFA
     return int(data["id"])
 
 
+def star_notification_number(purchase_number: str, *, lot_index: int = 1) -> str:
+    """MVP star id for RTS notice create: ``l{notificationNumber}-{lot}``."""
+    pn = str(purchase_number or "").strip()
+    idx = max(1, int(lot_index))
+    if not pn:
+        raise RtsPpApiError("Номер извещения не задан.", reason="bad_request")
+    return f"l{pn}-{idx}"
+
+
+def notice_offer_edit_url(purchase_number: str, *, star: str | None = None) -> str:
+    pn = str(purchase_number or "").strip()
+    star_val = str(star or "").strip() or star_notification_number(pn)
+    return NOTICE_OFFER_EDIT_URL.format(notification_number=pn, star=star_val)
+
+
+CREATION_DATA_EMPTY_BACKOFFS: tuple[float, ...] = (0.5, 1.0, 2.0, 5.0, 10.0)
+MAX_STAR_LOT_INDEX = 8
+
+
+def fetch_offer_creation_data(
+    cookie: str,
+    notification_number: str,
+    star: str,
+    *,
+    timeout: float = _DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """GET Trades/offer-price-list-item-creation-data for an EIS notice position."""
+    pn = str(notification_number or "").strip()
+    star_val = str(star or "").strip()
+    if not pn or not star_val:
+        raise RtsPpApiError(
+            "Нужны notificationNumber и starNotificationNumber.",
+            reason="bad_request",
+        )
+    try:
+        data = _request_json(
+            "GET",
+            CREATION_DATA_URL,
+            cookie=cookie,
+            params={"notificationNumber": pn, "starNotificationNumber": star_val},
+            timeout=timeout,
+        )
+    except RtsPpApiError as exc:
+        if exc.reason == "api_empty":
+            raise RtsPpApiError(
+                "РТС ещё не готов (creation-data HTTP 204) для "
+                f"starNotificationNumber={star_val}.",
+                reason="creation_data_empty",
+                detail={"notificationNumber": pn, "star": star_val},
+            ) from exc
+        raise
+    if not isinstance(data, dict):
+        raise RtsPpApiError(
+            "creation-data вернул не-объект.",
+            reason="api_error",
+            detail=data,
+        )
+    if not str(data.get("ktruCode") or "").strip():
+        raise RtsPpApiError(
+            "РТС ещё не готов (creation-data без ktruCode) для "
+            f"starNotificationNumber={star_val}.",
+            reason="creation_data_empty",
+            detail={"notificationNumber": pn, "star": star_val, "body": data},
+        )
+    return data
+
+
+def _lot_indices_for_probe(
+    *,
+    preferred_lot_index: int | None,
+    max_lot_index: int,
+) -> list[int]:
+    max_idx = max(1, int(max_lot_index))
+    preferred = max(1, int(preferred_lot_index)) if preferred_lot_index is not None else None
+    ordered: list[int] = []
+    if preferred is not None and preferred <= max_idx:
+        ordered.append(preferred)
+    for idx in range(1, max_idx + 1):
+        if idx not in ordered:
+            ordered.append(idx)
+    return ordered
+
+
+def resolve_offer_creation_data(
+    cookie: str,
+    notification_number: str,
+    *,
+    expected_ktru: str | None = None,
+    allowed_ktru: set[str] | None = None,
+    preferred_lot_index: int | None = None,
+    max_lot_index: int = MAX_STAR_LOT_INDEX,
+    empty_backoffs: tuple[float, ...] = CREATION_DATA_EMPTY_BACKOFFS,
+    sleep: Callable[[float], None] | None = None,
+    timeout: float = _DEFAULT_TIMEOUT,
+) -> tuple[dict[str, Any], str]:
+    """Fetch creation-data with star probe and retry on empty (HTTP 204).
+
+    Returns ``(creation_data, starNotificationNumber)``.
+    When ``expected_ktru`` is set, probes lots until ktruCode matches.
+    When ``allowed_ktru`` is set (and expected is not), returns first lot whose
+    ktruCode is in the set.
+    """
+    pn = str(notification_number or "").strip()
+    if not pn:
+        raise RtsPpApiError("Номер извещения не задан.", reason="bad_request")
+    sleep_fn = sleep or time.sleep
+    want = str(expected_ktru or "").strip() or None
+    allowed = {str(x).strip() for x in (allowed_ktru or set()) if str(x).strip()} or None
+    indices = _lot_indices_for_probe(
+        preferred_lot_index=preferred_lot_index,
+        max_lot_index=max_lot_index,
+    )
+    waits = (0.0, *tuple(float(x) for x in empty_backoffs))
+    last_empty: RtsPpApiError | None = None
+    mismatch_detail: dict[str, Any] | None = None
+
+    for wait in waits:
+        if wait > 0:
+            sleep_fn(wait)
+        saw_non_empty = False
+        for lot_idx in indices:
+            star = star_notification_number(pn, lot_index=lot_idx)
+            try:
+                data = fetch_offer_creation_data(cookie, pn, star, timeout=timeout)
+            except RtsPpApiError as exc:
+                if exc.reason == "creation_data_empty":
+                    last_empty = exc
+                    continue
+                raise
+            saw_non_empty = True
+            got = str(data.get("ktruCode") or "").strip()
+            if want:
+                if got == want:
+                    return data, star
+                mismatch_detail = {
+                    "notificationNumber": pn,
+                    "star": star,
+                    "creation_ktru": got,
+                    "expected_ktru": want,
+                }
+                continue
+            if allowed is not None:
+                if got in allowed:
+                    return data, star
+                continue
+            return data, star
+        if saw_non_empty and want:
+            raise RtsPpApiError(
+                f"КТРУ creation-data не совпадает с позицией «{want}» "
+                f"после probe star l{{pn}}-1…{max(indices)} "
+                f"(starNotificationNumber, вероятно, не та позиция).",
+                reason="star_mismatch",
+                detail=mismatch_detail or {"expected_ktru": want, "notificationNumber": pn},
+            )
+        if saw_non_empty and allowed is not None:
+            raise RtsPpApiError(
+                "Ни одна позиция creation-data (probe star) не попала в каталог КТРУ.",
+                reason="star_mismatch",
+                detail={"notificationNumber": pn, "allowed_count": len(allowed)},
+            )
+        # all empty — retry after backoff
+    raise RtsPpApiError(
+        "РТС ещё не готов (creation-data HTTP 204) после retry; "
+        f"probe star l{pn}-1…{max(indices)}. Позиция может быть недоступна для подачи ПП.",
+        reason="creation_data_empty",
+        detail={
+            "notificationNumber": pn,
+            "stars_probed": [star_notification_number(pn, lot_index=i) for i in indices],
+            "last_empty": getattr(last_empty, "detail", None),
+        },
+    )
+
+
+def create_temporary_offer(
+    cookie: str,
+    payload: dict[str, Any],
+    *,
+    timeout: float = _DEFAULT_TIMEOUT,
+) -> int:
+    """POST OfferPriceListItem/temporary/create — Temporary item linked to notice flow."""
+    data = _request_json(
+        "POST",
+        f"{OFFERS_BASE}/temporary/create",
+        cookie=cookie,
+        json_body=payload,
+        timeout=timeout,
+    )
+    if not isinstance(data, dict) or not data.get("id"):
+        raise RtsPpApiError(
+            "РТС не вернул id temporary-предложения.",
+            reason="api_error",
+            detail=data,
+        )
+    return int(data["id"])
+
+
 def get_draft(cookie: str, draft_id: int, *, timeout: float = _DEFAULT_TIMEOUT) -> dict[str, Any]:
     data = _request_json("GET", f"{OFFERS_BASE}/{int(draft_id)}", cookie=cookie, timeout=timeout)
     if not isinstance(data, dict):
@@ -505,6 +842,26 @@ def get_draft(cookie: str, draft_id: int, *, timeout: float = _DEFAULT_TIMEOUT) 
 
 def update_draft(cookie: str, item: dict[str, Any], *, timeout: float = _DEFAULT_TIMEOUT) -> None:
     _request_json("POST", f"{OFFERS_BASE}/draft/update", cookie=cookie, json_body=item, timeout=timeout)
+
+
+def fetch_national_mode_info_types(
+    cookie: str,
+    okpd2_code: str,
+    *,
+    timeout: float = _DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """GET national-mode/info-types/?okpd2Code=… — allowed ПП 1875 types for OKPD2."""
+    code = str(okpd2_code or "").strip()
+    if not code:
+        return {}
+    data = _request_json(
+        "GET",
+        NATIONAL_MODE_INFO_TYPES_URL,
+        cookie=cookie,
+        params={"okpd2Code": code},
+        timeout=timeout,
+    )
+    return data if isinstance(data, dict) else {}
 
 
 def _draft_search_page(
@@ -562,8 +919,12 @@ def draft_search_by_id(
 
 
 def pp_draft_direct_edit_url(draft_id: int | None) -> str:
-    if draft_id:
-        return DRAFT_EDIT_BY_ID_URL.format(draft_id=int(draft_id))
+    try:
+        num = int(draft_id) if draft_id is not None else 0
+    except (TypeError, ValueError):
+        num = 0
+    if num > 0:
+        return DRAFT_EDIT_BY_ID_URL.format(draft_id=num)
     return ""
 
 
@@ -571,7 +932,11 @@ def draft_edit_url(protected_id: str, *, draft_id: int | None = None) -> str:
     pid = str(protected_id or "").strip()
     if pid:
         return DRAFT_EDIT_URL.format(protected_id=pid)
-    if draft_id:
+    try:
+        num = int(draft_id) if draft_id is not None else 0
+    except (TypeError, ValueError):
+        num = 0
+    if num > 0:
         # Numeric /edit/{id} does not load RTS form (UI reads draft/search by protectedId).
         return OFFERS_DRAFTS_URL
     return ""
@@ -584,8 +949,26 @@ def _search_char_options(ktru_item: dict[str, Any], code: str) -> list[dict[str,
     return []
 
 
-def _set_characteristic_value(ch: dict[str, Any], cv: dict[str, Any]) -> None:
-    ch["characteristicValues"] = [_characteristic_value_for_api(cv, characteristic=ch)]
+def _set_characteristic_values(
+    ch: dict[str, Any],
+    cvs: list[dict[str, Any]],
+    *,
+    options: list[dict[str, Any]] | None = None,
+) -> None:
+    ch["characteristicValues"] = [
+        _characteristic_value_for_api(cv, options=options, characteristic=ch)
+        for cv in cvs
+        if isinstance(cv, dict)
+    ]
+
+
+def _set_characteristic_value(
+    ch: dict[str, Any],
+    cv: dict[str, Any],
+    *,
+    options: list[dict[str, Any]] | None = None,
+) -> None:
+    _set_characteristic_values(ch, [cv], options=options)
 
 
 def fill_required_characteristics(
@@ -774,20 +1157,40 @@ def ensure_delivery_stub(item: dict[str, Any]) -> None:
     apply_notice_delivery(item)
 
 
-def apply_draft_defaults(item: dict[str, Any], *, country: "CountryOfOrigin | None" = None) -> None:
+def apply_draft_defaults(
+    item: dict[str, Any],
+    *,
+    country: "CountryOfOrigin | None" = None,
+    find_item: dict[str, Any] | None = None,
+    info_types_payload: dict[str, Any] | None = None,
+) -> str | None:
+    """Apply country/national-mode defaults. Returns source tag when country is set."""
     from ktru_country_origin import DEFAULT_COUNTRY, apply_country_to_draft_item, national_mode_groups_for_country
 
     if country is not None:
-        apply_country_to_draft_item(item, country)
-        return
+        return apply_country_to_draft_item(
+            item,
+            country,
+            find_item=find_item,
+            info_types_payload=info_types_payload,
+        )
     rf = DEFAULT_COUNTRY
     if not item.get("countriesOfOrigin"):
         item["countriesOfOrigin"] = [{"code": rf.code, "name": rf.name}]
+    # Without explicit country: fill empty groups via info-types if given, else legacy stub.
+    if info_types_payload is not None or find_item is not None:
+        return apply_country_to_draft_item(
+            item,
+            rf,
+            find_item=find_item,
+            info_types_payload=info_types_payload,
+        )
     national, software = national_mode_groups_for_country(rf)
     if not item.get("nationalModeInfoGroups"):
         item["nationalModeInfoGroups"] = national
     if not item.get("softwareNationalModeInfoGroups"):
         item["softwareNationalModeInfoGroups"] = software
+    return None
 
 
 def create_and_save_pp_draft(
@@ -854,7 +1257,16 @@ def create_and_save_pp_draft(
         title=product_title,
         path=country_origin_path or default_country_origin_path(),
     )
-    apply_draft_defaults(item, country=country)
+    info_types: dict[str, Any] = {}
+    try:
+        from rts_national_mode import okpd2_code_from_ktru
+
+        okpd2 = okpd2_code_from_ktru(ktru_code, ktru_item)
+        if okpd2:
+            info_types = fetch_national_mode_info_types(cookie, okpd2, timeout=timeout)
+    except RtsPpApiError:
+        info_types = {}
+    apply_draft_defaults(item, country=country, info_types_payload=info_types or None)
     _fix_characteristic_value_ids(item, ktru_item)
     update_draft(cookie, item, timeout=timeout)
     item = get_draft(cookie, draft_id, timeout=timeout)

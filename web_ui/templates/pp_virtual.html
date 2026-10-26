@@ -1,0 +1,611 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Виртуальные ПП</h2>
+<p class="hint">
+  Набор (ядро + пояс) создаётся как на Ядре КТРУ: регионы, цена, количество.
+  Черновики попадают в «Черновики ПП» с источником Виртуальное_ядро и не публикуются.
+  Срок в черновике РТС 20–40 дней; в сопоставлении с ЕИС срок не фильтрует, регион — ось матча.
+  <a href="{{ request.url_for('page_pp_core') }}">Ядро КТРУ</a>
+  ·
+  <a href="{{ request.url_for('page_pp_drafts') }}">Черновики</a>
+  ·
+  <a href="{{ request.url_for('page_pp_virtual_events') }}">Журнал сопоставления</a>
+</p>
+
+<div id="pp-virtual-flash" class="msg err" hidden></div>
+<div id="pp-virtual-ok" class="msg ok" hidden></div>
+
+<section class="card">
+  <h3>Набор и опрос</h3>
+  <label>
+    КТРУ
+    <select id="pp-virtual-ktru">
+      {% if ktru_options %}
+        {% for item in ktru_options %}
+        <option value="{{ item.code }}" {% if item.code == default_ktru %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      {% else %}
+        <option value="{{ default_ktru }}" selected>{{ default_ktru }}</option>
+      {% endif %}
+    </select>
+  </label>
+  <p class="hint" id="pp-virtual-known" hidden></p>
+  <div class="pp-create-actions">
+    <button type="button" class="button" id="pp-virtual-sync">Собрать виртуальный набор из ядра</button>
+    <button type="button" class="button secondary" id="pp-virtual-poll">Сопоставить с монитором ЕИС</button>
+  </div>
+  <p class="hint" id="pp-virtual-set-meta">Набор не собран. Соберите из ядра, отметьте варианты и создайте черновики.</p>
+  <div class="pp-create-actions">
+    <button type="button" class="button secondary pp-virtual-days" data-days="7">7 дней</button>
+    <button type="button" class="button secondary pp-virtual-days" data-days="30">30 дней</button>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Варианты набора</h3>
+  <div class="pp-create-actions">
+    <button type="button" class="button secondary" id="pp-virtual-select-ready">Отметить доступные</button>
+    <button type="button" class="button secondary" id="pp-virtual-select-none">Снять</button>
+  </div>
+  <div class="pp-create-regions-table">
+    <table class="eis-table">
+      <thead>
+        <tr><th></th><th>№</th><th>Слой</th><th>Характеристики</th><th>Маппинг</th></tr>
+      </thead>
+      <tbody id="pp-virtual-variants">
+        <tr><td colspan="5" class="hint">Сначала соберите набор.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="pp-virtual-focus" hidden>
+    <h3>Выбранный вариант <span id="pp-virtual-focus-no"></span></h3>
+    <p class="hint" id="pp-virtual-focus-meta"></p>
+    <p id="pp-virtual-focus-top5"></p>
+    <div id="pp-virtual-focus-ladder" class="pp-core-ladder"></div>
+    <p class="hint">Клик по ступени цены подставляет её в поле «Проставить цену».</p>
+    <p class="hint" id="pp-virtual-focus-prices"></p>
+    <p class="hint" id="pp-virtual-focus-qty"></p>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Регионы, цена и количество</h3>
+  <p class="hint">Одна матрица на весь run. Срок поставки в черновике: 20–40 дней.</p>
+  <div class="pp-create-regions-toolbar">
+    <button type="button" class="button secondary" id="pp-virtual-regions-all">Все</button>
+    <button type="button" class="button secondary" id="pp-virtual-regions-none">Снять</button>
+    <button type="button" class="button secondary" id="pp-virtual-regions-frequent">Частые регионы опроса</button>
+    <input type="text" id="pp-virtual-fill-price" placeholder="Цена, напр. 4500">
+    <button type="button" class="button secondary" id="pp-virtual-fill-price-btn">Проставить цену</button>
+    <input type="text" id="pp-virtual-fill-qty" placeholder="Кол-во, напр. 10">
+    <button type="button" class="button secondary" id="pp-virtual-fill-qty-btn">Проставить количество</button>
+  </div>
+  <div class="pp-create-regions-table">
+    <table class="eis-table">
+      <thead>
+        <tr><th></th><th>Субъект</th><th>ОКТМО</th><th>Цена за шт.</th><th>Количество</th></tr>
+      </thead>
+      <tbody id="pp-virtual-oktmo-body">
+        <tr><td colspan="5" class="hint">Загрузка справочника ОКТМО…</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="pp-create-actions">
+    <button type="button" class="button" id="pp-virtual-enqueue">Создать черновики (без публикации)</button>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Очередь</h3>
+  <p class="hint" id="pp-virtual-run-meta">Нет активного run.</p>
+  <div class="pp-create-regions-table">
+    <table class="eis-table">
+      <thead>
+        <tr><th>№</th><th>Статус</th><th>Черновик</th><th>Ошибка</th></tr>
+      </thead>
+      <tbody id="pp-virtual-queue-body">
+        <tr><td colspan="4" class="hint">Очередь пуста.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section class="card">
+  <h3>Сводка сопоставления</h3>
+  <div class="pp-virtual-summary" id="pp-virtual-summary"></div>
+</section>
+
+<section class="card">
+  <h3>Регионы событий</h3>
+  <div class="pp-create-regions-table">
+    <table class="eis-table">
+      <thead>
+        <tr><th>ОКТМО</th><th>Region (RTS)</th><th>n</th><th>Доля</th></tr>
+      </thead>
+      <tbody id="pp-virtual-regions">
+        <tr><td colspan="4" class="hint">Нет событий.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p class="hint" id="pp-virtual-unknown"></p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+(function () {
+  var state = {
+    ktru: {{ default_ktru|tojson }},
+    days: 7,
+    variants: [],
+    variantStats: [],
+    focusNo: 0,
+    runId: "",
+    pollTimer: null,
+    savedDelivery: [],
+    meta: {}
+  };
+
+  function $(id) { return document.getElementById(id); }
+  function showErr(msg) {
+    var el = $("pp-virtual-flash");
+    el.textContent = msg || "";
+    el.hidden = !msg;
+    if (msg) $("pp-virtual-ok").hidden = true;
+  }
+  function showOk(msg) {
+    var el = $("pp-virtual-ok");
+    el.textContent = msg || "";
+    el.hidden = !msg;
+    if (msg) $("pp-virtual-flash").hidden = true;
+  }
+  function jsonError(data, status) {
+    if (!data) return "HTTP " + status;
+    if (typeof data.detail === "string") return data.detail;
+    if (data.detail && data.detail.message) return data.detail.message;
+    return JSON.stringify(data.detail || data);
+  }
+  function fetchJson(url, opts) {
+    return fetch(url, opts).then(function (resp) {
+      return resp.json().then(function (data) {
+        if (!resp.ok) throw new Error(jsonError(data, resp.status));
+        return data;
+      }, function () {
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        return {};
+      });
+    });
+  }
+  function fmtMoney(v) {
+    if (v == null || v === "") return "—";
+    var n = Number(v);
+    if (!isFinite(n)) return String(v);
+    return n.toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+  }
+  function selectedVariantNos() {
+    var out = [];
+    document.querySelectorAll("#pp-virtual-variants input[data-variant]").forEach(function (cb) {
+      if (cb.checked) out.push(parseInt(cb.getAttribute("data-variant"), 10));
+    });
+    return out.filter(function (n) { return n > 0; });
+  }
+  function selectedRegions() {
+    var rows = [];
+    document.querySelectorAll("#pp-virtual-oktmo-body tr").forEach(function (tr) {
+      var cb = tr.querySelector("input[type='checkbox']");
+      var price = tr.querySelector("input[data-field='price']");
+      var qty = tr.querySelector("input[data-field='qty']");
+      if (!cb || !cb.checked || !price || !qty) return;
+      rows.push({
+        code: cb.getAttribute("data-code") || "",
+        unit_price: price.value,
+        quantity: qty.value
+      });
+    });
+    return rows;
+  }
+  function applySavedDelivery(rows) {
+    var byCode = {};
+    (rows || []).forEach(function (row) {
+      if (row && row.code) byCode[row.code] = row;
+    });
+    document.querySelectorAll("#pp-virtual-oktmo-body tr").forEach(function (tr) {
+      var cb = tr.querySelector("input[type='checkbox']");
+      var price = tr.querySelector("input[data-field='price']");
+      var qty = tr.querySelector("input[data-field='qty']");
+      if (!cb) return;
+      var saved = byCode[cb.getAttribute("data-code") || ""];
+      if (!saved) return;
+      cb.checked = true;
+      if (price && saved.unit_price != null) price.value = saved.unit_price;
+      if (qty && saved.quantity != null) qty.value = saved.quantity;
+    });
+  }
+  function renderOktmo(items) {
+    var body = $("pp-virtual-oktmo-body");
+    body.innerHTML = "";
+    (items || []).forEach(function (item) {
+      var tr = document.createElement("tr");
+      var tdCb = document.createElement("td");
+      var cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.setAttribute("data-code", item.code || "");
+      tdCb.appendChild(cb);
+      var tdName = document.createElement("td");
+      tdName.textContent = item.name || "";
+      var tdCode = document.createElement("td");
+      tdCode.innerHTML = "<code>" + (item.code || "") + "</code>";
+      var tdPrice = document.createElement("td");
+      var price = document.createElement("input");
+      price.setAttribute("data-field", "price");
+      price.placeholder = "₽";
+      var tdQty = document.createElement("td");
+      var qty = document.createElement("input");
+      qty.setAttribute("data-field", "qty");
+      qty.placeholder = "шт.";
+      function maybeCheck() {
+        if ((price.value || "").trim() || (qty.value || "").trim()) cb.checked = true;
+      }
+      price.addEventListener("input", maybeCheck);
+      qty.addEventListener("input", maybeCheck);
+      tdPrice.appendChild(price);
+      tdQty.appendChild(qty);
+      tr.appendChild(tdCb);
+      tr.appendChild(tdName);
+      tr.appendChild(tdCode);
+      tr.appendChild(tdPrice);
+      tr.appendChild(tdQty);
+      body.appendChild(tr);
+    });
+    applySavedDelivery(state.savedDelivery);
+  }
+  function renderQueue(data) {
+    var items = (data && data.items) || [];
+    var counts = (data && data.counts) || {};
+    var parts = Object.keys(counts).map(function (k) { return k + ": " + counts[k]; });
+    $("pp-virtual-run-meta").textContent = state.runId
+      ? ("run " + state.runId + (parts.length ? " — " + parts.join(", ") : ""))
+      : "Нет активного run.";
+    var body = $("pp-virtual-queue-body");
+    body.innerHTML = "";
+    if (!items.length) {
+      body.innerHTML = "<tr><td colspan='4' class='hint'>Очередь пуста.</td></tr>";
+      return;
+    }
+    items.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.innerHTML =
+        "<td>" + (row.variant_no || "") + "</td>" +
+        "<td>" + (row.status || "") + "</td>" +
+        "<td>" + (row.rts_draft_id != null ? row.rts_draft_id : "—") + "</td>" +
+        "<td>" + (row.error_text || "") + "</td>";
+      body.appendChild(tr);
+    });
+  }
+  function hasPending(data) {
+    var counts = (data && data.counts) || {};
+    return (counts.pending || 0) + (counts.running || 0) > 0;
+  }
+  function pollQueue() {
+    if (!state.runId) return;
+    fetchJson("/api/rts/pp/virtual/queue?run_id=" + encodeURIComponent(state.runId)).then(function (data) {
+      renderQueue(data);
+      if (hasPending(data)) {
+        fetch("/api/rts/pp/virtual/drain", { method: "POST", headers: { "Accept": "application/json" } });
+      } else if (state.pollTimer) {
+        clearInterval(state.pollTimer);
+        state.pollTimer = null;
+      }
+    }).catch(function () {});
+  }
+  function startPoll() {
+    if (state.pollTimer) clearInterval(state.pollTimer);
+    pollQueue();
+    state.pollTimer = setInterval(pollQueue, 2500);
+  }
+  function formatPrice(p) {
+    if (p == null || p === "") return "—";
+    var n = Number(p);
+    if (!isFinite(n)) return String(p);
+    if (Math.abs(n - Math.round(n)) < 0.001) return String(Math.round(n));
+    return n.toFixed(2).replace(".", ",");
+  }
+  function top5Label(top5, ppN) {
+    var nmck = state.meta && state.meta.source === "nmck";
+    if (!top5) return nmck ? "нет цен в контрактах НМЦК" : "нет ПП в опросе";
+    if ((top5.open_slots || 0) > 0) {
+      return "свободно " + top5.open_slots + " из 5 — можно завысить цену" +
+        (ppN ? (nmck ? " (контрактов " + ppN + ")" : " (в опросе " + ppN + " ПП)") : "");
+    }
+    if (top5.need_le != null) return "вход в 5: ≤ " + formatPrice(top5.need_le) + " ₽";
+    return top5.note || (nmck ? "нет цен в контрактах НМЦК" : "нет ПП в опросе");
+  }
+  function renderFocus() {
+    var box = $("pp-virtual-focus");
+    document.querySelectorAll("#pp-virtual-variants tr").forEach(function (tr) {
+      tr.classList.toggle("pp-core-focus-row", tr.getAttribute("data-no") === String(state.focusNo));
+    });
+    var row = (state.variants || []).filter(function (v) { return Number(v.variant_no) === state.focusNo; })[0];
+    var stats = (state.variantStats || []).filter(function (v) { return Number(v.variant_no) === state.focusNo; })[0];
+    if (!state.focusNo || !row) { box.hidden = true; return; }
+    box.hidden = false;
+    $("pp-virtual-focus-no").textContent = "№ " + state.focusNo;
+    $("pp-virtual-focus-meta").textContent = row.chars_preview || "—";
+    $("pp-virtual-focus-top5").textContent = top5Label(row.top5, row.pp_n);
+    var ladderBox = $("pp-virtual-focus-ladder");
+    ladderBox.innerHTML = "";
+    var ladder = row.price_ladder || [];
+    if (!ladder.length) {
+      ladderBox.textContent = (state.meta && state.meta.source === "nmck")
+        ? "Нет цен по контрактам НМЦК для этого варианта."
+        : "В опросе нет совпавших предложений.";
+    } else {
+      var seen = 0;
+      var split = false;
+      ladder.forEach(function (step) {
+        if (!split && seen >= 5) {
+          var bar = document.createElement("span");
+          bar.className = "pp-core-ladder-split";
+          bar.textContent = "|";
+          ladderBox.appendChild(bar);
+          split = true;
+        }
+        var btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "pp-core-ladder-rung" + (seen < 5 ? " in5" : "");
+        btn.textContent = step.i + ": " + formatPrice(step.price) + (step.n > 1 ? "×" + step.n : "");
+        btn.title = "Подставить " + formatPrice(step.price);
+        btn.addEventListener("click", function () {
+          $("pp-virtual-fill-price").value = formatPrice(step.price);
+        });
+        ladderBox.appendChild(btn);
+        seen += Number(step.n || 1);
+      });
+    }
+    if (!stats) {
+      $("pp-virtual-focus-prices").textContent = "Нет hit-цен извещений в окне.";
+      $("pp-virtual-focus-qty").textContent = "";
+      return;
+    }
+    $("pp-virtual-focus-prices").textContent =
+      "Цены извещений: n=" + stats.n +
+      " min=" + fmtMoney(stats.price_min) +
+      " med=" + fmtMoney(stats.price_median) +
+      " max=" + fmtMoney(stats.price_max);
+    $("pp-virtual-focus-qty").textContent =
+      "Количество: min=" + fmtMoney(stats.qty_min) +
+      " med=" + fmtMoney(stats.qty_median) +
+      " max=" + fmtMoney(stats.qty_max);
+  }
+  function loadSet() {
+    var code = $("pp-virtual-ktru").value.trim();
+    state.ktru = code;
+    return fetchJson("/api/rts/pp/virtual/set?ktru_code=" + encodeURIComponent(code))
+      .then(function (j) {
+        var set = j.set || {};
+        var rows = j.variants || [];
+        state.variants = rows;
+        state.meta = j.meta || {};
+        state.savedDelivery = j.delivery || [];
+        var codes = j.ktru_codes || [];
+        $("pp-virtual-known").textContent = codes.length ? ("Известные КТРУ: " + codes.join(", ")) : "";
+        if (set.set_id) {
+          $("pp-virtual-set-meta").textContent =
+            "Набор " + set.set_id + " · ядро " + (set.core_n || 0) + " · пояс " + (set.belt_n || 0) +
+            " · " + (set.created_at_utc || "");
+        } else {
+          $("pp-virtual-set-meta").textContent = "Набор не собран. Соберите из ядра, отметьте варианты и создайте черновики.";
+        }
+        var body = $("pp-virtual-variants");
+        body.innerHTML = "";
+        if (!rows.length) {
+          body.innerHTML = '<tr><td colspan="5" class="hint">Пусто.</td></tr>';
+          applySavedDelivery(state.savedDelivery);
+          renderFocus();
+          return;
+        }
+        rows.forEach(function (row) {
+          var tr = document.createElement("tr");
+          tr.dataset.no = String(row.variant_no);
+          if (Number(row.variant_no) === state.focusNo) tr.className = "pp-core-focus-row";
+          var tdCb = document.createElement("td");
+          var cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.setAttribute("data-variant", String(row.variant_no || ""));
+          cb.disabled = !row.can_enqueue;
+          tdCb.appendChild(cb);
+          var tdNo = document.createElement("td");
+          tdNo.textContent = String(row.variant_no || "");
+          var tdLayer = document.createElement("td");
+          tdLayer.textContent = row.in_core ? "ядро" : "пояс";
+          var tdPrev = document.createElement("td");
+          tdPrev.textContent = row.chars_preview || "—";
+          var tdMap = document.createElement("td");
+          tdMap.textContent = row.map_status || "—";
+          if (row.map_reason) {
+            var hint = document.createElement("div");
+            hint.className = "hint";
+            hint.textContent = row.map_reason;
+            tdMap.appendChild(hint);
+          }
+          tr.appendChild(tdCb);
+          tr.appendChild(tdNo);
+          tr.appendChild(tdLayer);
+          tr.appendChild(tdPrev);
+          tr.appendChild(tdMap);
+          tr.addEventListener("click", function (ev) {
+            state.focusNo = Number(row.variant_no);
+            renderFocus();
+            if (cb.disabled) return;
+            if (ev.target === cb) return;
+            cb.checked = true;
+          });
+          body.appendChild(tr);
+        });
+        applySavedDelivery(state.savedDelivery);
+        renderFocus();
+      });
+  }
+  function loadStats() {
+    var code = $("pp-virtual-ktru").value.trim();
+    var q = "?ktru_code=" + encodeURIComponent(code) + "&days=" + state.days;
+    return fetch("/api/rts/pp/virtual/stats" + q, { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        state.variantStats = j.variant_stats || [];
+        $("pp-virtual-summary").innerHTML =
+          "<span>Извещений: <b>" + (j.notices || 0) + "</b></span>" +
+          "<span>Hit ядра: <b>" + (j.hit_core || 0) + "</b></span>" +
+          "<span>Hit пояса: <b>" + (j.hit_belt || 0) + "</b></span>" +
+          "<span>Miss: <b>" + (j.miss_chars || 0) + "</b></span>" +
+          "<span>Нет маппинга: <b>" + (j.unmapped_chars || 0) + "</b></span>" +
+          "<span>Регион unknown: <b>" + (j.unmapped_region || 0) + "</b></span>";
+        var rb = $("pp-virtual-regions");
+        rb.innerHTML = "";
+        var regions = j.regions || [];
+        if (!regions.length) {
+          rb.innerHTML = '<tr><td colspan="4" class="hint">Нет событий.</td></tr>';
+        } else {
+          regions.forEach(function (row) {
+            var tr = document.createElement("tr");
+            tr.innerHTML =
+              "<td>" + (row.subject_oktmo || "—") + "</td>" +
+              "<td>" + (row.region_raw || "—") + "</td>" +
+              "<td>" + row.n + "</td>" +
+              "<td>" + ((row.share * 100).toFixed(1)) + "%</td>";
+            rb.appendChild(tr);
+          });
+        }
+        renderFocus();
+      });
+  }
+  function loadUnknown() {
+    return fetch("/api/rts/pp/virtual/unknown-regions", { credentials: "same-origin" })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var rows = j.regions || [];
+        if (!rows.length) {
+          $("pp-virtual-unknown").textContent = "";
+          return;
+        }
+        $("pp-virtual-unknown").textContent = "Неразмапленные Region: " +
+          rows.slice(0, 8).map(function (r) { return r.region_raw + " (" + r.n + ")"; }).join("; ");
+      });
+  }
+  function refreshAll() {
+    showErr("");
+    return loadSet().then(loadStats).then(loadUnknown).catch(function (e) {
+      showErr(e.message || String(e));
+    });
+  }
+
+  $("pp-virtual-sync").addEventListener("click", function () {
+    showErr("");
+    fetchJson("/api/rts/pp/virtual/sync-set", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ktru_code: $("pp-virtual-ktru").value.trim() })
+    }).then(function (j) {
+      showOk("Набор: ядро " + (j.core_n || 0) + ", пояс " + (j.belt_n || 0) + ".");
+      return refreshAll();
+    }).catch(function (e) { showErr(e.message || String(e)); });
+  });
+  $("pp-virtual-poll").addEventListener("click", function () {
+    showErr("");
+    fetchJson("/api/rts/pp/virtual/poll", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ktru_code: $("pp-virtual-ktru").value.trim(), days: state.days })
+    }).then(function (j) {
+      var err = (j.errors || []).length ? (" " + j.errors.slice(0, 3).join("; ")) : "";
+      showOk("ЕИС: извещений " + (j.notices || 0) + ", позиций " + (j.matched || 0) + "." + err);
+      return refreshAll();
+    }).catch(function (e) { showErr(e.message || String(e)); });
+  });
+  $("pp-virtual-select-ready").addEventListener("click", function () {
+    document.querySelectorAll("#pp-virtual-variants input[data-variant]").forEach(function (cb) {
+      if (!cb.disabled) cb.checked = true;
+    });
+  });
+  $("pp-virtual-select-none").addEventListener("click", function () {
+    document.querySelectorAll("#pp-virtual-variants input[data-variant]").forEach(function (cb) { cb.checked = false; });
+  });
+  $("pp-virtual-regions-all").addEventListener("click", function () {
+    document.querySelectorAll("#pp-virtual-oktmo-body input[type='checkbox']").forEach(function (cb) { cb.checked = true; });
+  });
+  $("pp-virtual-regions-none").addEventListener("click", function () {
+    document.querySelectorAll("#pp-virtual-oktmo-body input[type='checkbox']").forEach(function (cb) { cb.checked = false; });
+  });
+  $("pp-virtual-regions-frequent").addEventListener("click", function () {
+    var code = ($("pp-virtual-ktru").value || "").trim();
+    if (!code) { showErr("Укажите код КТРУ."); return; }
+    fetchJson("/api/rts/pp/core/frequent-regions?ktru_code=" + encodeURIComponent(code)).then(function (data) {
+      var codes = {};
+      (data.items || []).forEach(function (row) { if (row && row.code) codes[row.code] = true; });
+      var n = 0;
+      document.querySelectorAll("#pp-virtual-oktmo-body input[type='checkbox']").forEach(function (cb) {
+        var on = !!codes[cb.getAttribute("data-code") || ""];
+        cb.checked = on;
+        if (on) n += 1;
+      });
+      showOk("Отмечено регионов опроса: " + n + ".");
+    }).catch(function (err) { showErr(err.message); });
+  });
+  function fillChecked(field, value) {
+    document.querySelectorAll("#pp-virtual-oktmo-body tr").forEach(function (tr) {
+      var cb = tr.querySelector("input[type='checkbox']");
+      var inp = tr.querySelector("input[data-field='" + field + "']");
+      if (cb && cb.checked && inp) inp.value = value;
+    });
+  }
+  $("pp-virtual-fill-price-btn").addEventListener("click", function () {
+    fillChecked("price", ($("pp-virtual-fill-price").value || "").trim());
+  });
+  $("pp-virtual-fill-qty-btn").addEventListener("click", function () {
+    fillChecked("qty", ($("pp-virtual-fill-qty").value || "").trim());
+  });
+  $("pp-virtual-enqueue").addEventListener("click", function () {
+    var nos = selectedVariantNos();
+    var regions = selectedRegions();
+    if (!nos.length) { showErr("Отметьте хотя бы один вариант набора."); return; }
+    if (!regions.length) { showErr("Отметьте регион, укажите цену и количество больше 0."); return; }
+    showErr("");
+    showOk("");
+    $("pp-virtual-enqueue").disabled = true;
+    fetchJson("/api/rts/pp/virtual/enqueue", {
+      method: "POST",
+      headers: { "Accept": "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ktru_code: ($("pp-virtual-ktru").value || "").trim(),
+        variant_nos: nos,
+        regions: regions
+      })
+    }).then(function (data) {
+      state.runId = data.run_id || "";
+      renderQueue(data);
+      var skip = (data.skipped || []).length;
+      showOk("В очереди: " + (data.enqueued || 0) + (skip ? ", пропущено: " + skip : "") + ".");
+      startPoll();
+    }).catch(function (err) {
+      showErr(err.message);
+    }).then(function () {
+      $("pp-virtual-enqueue").disabled = false;
+    });
+  });
+  Array.prototype.forEach.call(document.querySelectorAll(".pp-virtual-days"), function (btn) {
+    btn.addEventListener("click", function () {
+      state.days = Number(btn.getAttribute("data-days") || "7");
+      refreshAll();
+    });
+  });
+  $("pp-virtual-ktru").addEventListener("change", refreshAll);
+
+  fetchJson("/api/rts/pp/oktmo-subjects").then(function (data) {
+    renderOktmo(data.items || []);
+    return refreshAll();
+  }).catch(function (err) {
+    $("pp-virtual-oktmo-body").innerHTML = "<tr><td colspan='5' class='hint'>" + err.message + "</td></tr>";
+    return refreshAll();
+  });
+})();
+</script>
+{% endblock %}

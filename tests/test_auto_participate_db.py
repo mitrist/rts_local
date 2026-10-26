@@ -152,3 +152,43 @@ def test_auto_participate_candidates_excludes_attempts_and_drafts(tmp_path):
     )
     candidates2 = auto_participate_candidates(db, limit=10, rts_profile="Nacpro")
     assert candidates2 == []
+
+
+def test_auto_participate_candidates_filter_by_purchase_number(tmp_path):
+    from eis_analytics_db import list_notice_html_ktru_codes
+
+    db = analytics_db_path(tmp_path)
+    pn1 = "0117300004426000001"
+    pn2 = "0117300004426000002"
+    ktru = "08.12.12.140-00000005"
+    record_rss_poll_run(
+        db,
+        [
+            {"reg_number": pn1, "link": f"https://example.test/{pn1}", "pub_date_utc": "2026-06-25T10:00:00Z"},
+            {"reg_number": pn2, "link": f"https://example.test/{pn2}", "pub_date_utc": "2026-06-25T10:01:00Z"},
+        ],
+        query_label="test",
+        rss_url="https://example.test/rss",
+        started_at_utc=datetime(2026, 6, 25, 10, 0, tzinfo=timezone.utc),
+        finished_at_utc=datetime(2026, 6, 25, 10, 0, tzinfo=timezone.utc),
+        ok=True,
+        errors=[],
+    )
+    for pn in (pn1, pn2):
+        record_notice_html_page(
+            db,
+            purchase_number=pn,
+            source_url=f"https://example.test/{pn}",
+            html_text="<html></html>",
+            lines=[_line(purchase_number=pn, ktru=ktru)],
+            fetched_at_utc=datetime(2026, 6, 25, 10, 1, tzinfo=timezone.utc),
+            ok=True,
+            http_status=200,
+        )
+    all_c = auto_participate_candidates(db, limit=10, rts_profile="IPSokolova")
+    assert {c["purchase_number"] for c in all_c} == {pn1, pn2}
+    only1 = auto_participate_candidates(db, limit=10, rts_profile="IPSokolova", purchase_number=pn1)
+    assert len(only1) == 1
+    assert only1[0]["purchase_number"] == pn1
+    assert list_notice_html_ktru_codes(db, pn1) == [ktru]
+    assert list_notice_html_ktru_codes(db, "missing") == []

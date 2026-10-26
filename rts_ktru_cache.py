@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from rts_pp_api import RtsPpApiError, search_ktru
+from rts_pp_api import RtsPpApiError, search_ktru, search_ktru_by_name
 
 DEFAULT_KTRU_CACHE_TTL_SEC = 7 * 24 * 3600
 _DEFAULT_TTL_SEC = DEFAULT_KTRU_CACHE_TTL_SEC
@@ -240,6 +240,83 @@ def import_ktru_template(cache_dir: Path, ktru_code: str, data: dict[str, Any] |
             save_cached_template(cache_dir, want, item)
             return item
     raise ValueError(f"В JSON нет шаблона КТРУ {ktru_code}")
+
+
+def search_cached_ktru(
+    cache_dir: Path,
+    query: str,
+    *,
+    limit: int = 20,
+) -> list[dict[str, Any]]:
+    """Substring search over local ktru_rts_cache (code or name)."""
+    q = str(query or "").strip()
+    if not q or not cache_dir.is_dir():
+        return []
+    needle = q.casefold()
+    hits: list[dict[str, Any]] = []
+    exact: dict[str, Any] | None = None
+    for path in sorted(cache_dir.glob("*.json")):
+        raw = _read_cache_file(path)
+        if not raw:
+            continue
+        item = raw.get("item") if isinstance(raw.get("item"), dict) else {}
+        code = str(item.get("code") or "").strip()
+        name = str(item.get("name") or "").strip()
+        if not code:
+            continue
+        row = {"code": code, "name": name, "version": item.get("version")}
+        if code.casefold() == needle:
+            exact = row
+            continue
+        if needle in code.casefold() or needle in name.casefold():
+            hits.append(row)
+    hits.sort(key=lambda row: (str(row.get("name") or "").casefold(), str(row.get("code") or "")))
+    out: list[dict[str, Any]] = []
+    if exact:
+        out.append(exact)
+    for row in hits:
+        if exact and row["code"] == exact["code"]:
+            continue
+        out.append(row)
+        if len(out) >= max(1, int(limit)):
+            break
+    return out[: max(1, int(limit))]
+
+
+def search_ktru_for_wizard(
+    cookie: str | None,
+    query: str,
+    cache_dir: Path,
+    *,
+    limit: int = 20,
+) -> tuple[list[dict[str, Any]], str]:
+    """Merge local cache hits with live Ktru/search. Returns (items, live_error)."""
+    cached = search_cached_ktru(cache_dir, query, limit=limit)
+    live_error = ""
+    live: list[dict[str, Any]] = []
+    if cookie:
+        try:
+            for item in search_ktru_by_name(cookie, query, take=limit):
+                code = str(item.get("code") or "").strip()
+                if not code:
+                    continue
+                live.append(
+                    {
+                        "code": code,
+                        "name": str(item.get("name") or "").strip(),
+                        "version": item.get("version"),
+                    }
+                )
+                if item.get("characteristics") is not None or item.get("okeis") is not None:
+                    save_cached_template(cache_dir, code, item)
+        except RtsPpApiError as exc:
+            live_error = str(exc)
+    by_code: dict[str, dict[str, Any]] = {str(row["code"]): row for row in cached}
+    for row in live:
+        by_code[str(row["code"])] = row
+    items = list(by_code.values())
+    items.sort(key=lambda row: (str(row.get("name") or "").casefold(), str(row.get("code") or "")))
+    return items[: max(1, int(limit))], live_error
 
 
 def get_ktru_template(

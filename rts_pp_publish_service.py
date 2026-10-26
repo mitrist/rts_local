@@ -279,8 +279,11 @@ def submit_publish_signatures(
     try:
         cookie = load_offers_cookie(cookie_path)
         validate_cookie_session(cookie)
-        tsa_result = append_signed_data(cookie, normalized)
-        # TSA may return stamped signatures; prefer response list if present
+        tsa_result = append_signed_data(
+            cookie,
+            normalized,
+            sign_requests=sign_requests,
+        )
         stamped = tsa_result if isinstance(tsa_result, list) else normalized
         update_pp_publish_job(
             analytics_db,
@@ -288,7 +291,12 @@ def submit_publish_signatures(
             status="publishing",
             signatures_json=json.dumps(stamped, ensure_ascii=False),
         )
-        publish_offer(cookie, prepare, stamped if isinstance(stamped, list) else normalized)
+        publish_offer(
+            cookie,
+            prepare,
+            stamped if isinstance(stamped, list) else normalized,
+            draft_id=int(job["rts_draft_id"]),
+        )
         update_pp_publish_job(
             analytics_db,
             int(job["id"]),
@@ -334,6 +342,42 @@ def submit_publish_signatures(
 
     final = get_pp_publish_job(analytics_db, int(job["id"]))
     assert final is not None
+    if str(final.get("source") or "") == "auto_monitor":
+        offer_key = str(final.get("source_key") or "").strip()
+        if offer_key:
+            try:
+                from eis_analytics_db import update_auto_monitor_draft_queue
+
+                update_auto_monitor_draft_queue(
+                    analytics_db,
+                    offer_key,
+                    rts_profile=str(final.get("rts_profile") or "").strip(),
+                    status="published",
+                    rts_draft_id=int(final["rts_draft_id"]) if final.get("rts_draft_id") else None,
+                    error_text="",
+                )
+            except Exception as exc:  # noqa: BLE001
+                _LOG.warning("auto_monitor queue publish sync failed: %s", exc)
+    elif str(final.get("source") or "") == "notice":
+        source_key = str(final.get("source_key") or "").strip()
+        if "|" in source_key:
+            pn, lk = source_key.split("|", 1)
+            pn, lk = pn.strip(), lk.strip()
+            if pn and lk:
+                try:
+                    from eis_analytics_db import record_auto_participate_attempt
+
+                    record_auto_participate_attempt(
+                        analytics_db,
+                        purchase_number=pn,
+                        line_key=lk,
+                        rts_profile=str(final.get("rts_profile") or "").strip(),
+                        status="published",
+                        rts_draft_id=int(final["rts_draft_id"]) if final.get("rts_draft_id") else None,
+                        error_text="",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _LOG.warning("auto_participate publish sync failed: %s", exc)
     return _job_to_result(final, ok=True)
 
 

@@ -15,7 +15,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
 
-from eis_analytics_db import record_rss_poll_run
+from eis_analytics_db import record_rss_ktru_hints, record_rss_poll_run
 
 DEFAULT_RSS_URL = (
     "https://zakupki.gov.ru/epz/order/extendedsearch/rss.html?"
@@ -50,6 +50,7 @@ class EisRssItem:
     price_text: str = ""
     stage_text: str = ""
     ikz: str = ""
+    etp_name: str = ""
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +65,7 @@ class EisRssItem:
             "price_text": self.price_text,
             "stage_text": self.stage_text,
             "ikz": self.ikz,
+            "etp_name": self.etp_name,
         }
 
 
@@ -167,6 +169,29 @@ def rss_url_with_cache_buster(url: str, *, ts: int | None = None) -> str:
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs, doseq=True), parts.fragment))
 
 
+def rss_url_for_ktru(base_url: str, ktru_code: str, *, records_per_page: str = "_50") -> str:
+    """Same EIS RSS search, restricted to one KTRU classifier code (no HTML fetch)."""
+    code = str(ktru_code or "").strip()
+    parts = urlsplit(str(base_url or "").strip() or DEFAULT_RSS_URL)
+    drop = {
+        _CACHE_BUSTER_PARAM,
+        "kos",
+        "ktruIdsCodes",
+        "ktruIds",
+        "searchString",
+        "recordsPerPage",
+    }
+    pairs = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if k not in drop]
+    if code:
+        pairs.append(("kos", "on"))
+        pairs.append(("ktruIdsCodes", code))
+    page_size = str(records_per_page or "_50").strip() or "_50"
+    if not page_size.startswith("_"):
+        page_size = f"_{page_size}"
+    pairs.append(("recordsPerPage", page_size))
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(pairs, doseq=True), parts.fragment))
+
+
 def parse_rss_items(xml_text: str) -> list[EisRssItem]:
     body = _rss_xml_body(xml_text)
     try:
@@ -196,6 +221,11 @@ def parse_rss_items(xml_text: str) -> list[EisRssItem]:
                 price_text=_field_after_label(description, "Начальная цена контракта"),
                 stage_text=_field_after_label(description, "Этап размещения"),
                 ikz=_field_after_label(description, "Идентификационный код закупки (ИКЗ)"),
+                etp_name=(
+                    _field_after_label(description, "Площадка")
+                    or _field_after_label(description, "Электронная площадка")
+                    or _field_after_label(description, "Наименование электронной площадки")
+                ),
             )
         )
     return items
@@ -231,6 +261,11 @@ def _parse_rss_items_loose(xml_text: str) -> list[EisRssItem]:
                 price_text=_field_after_label(description, "Начальная цена контракта"),
                 stage_text=_field_after_label(description, "Этап размещения"),
                 ikz=_field_after_label(description, "Идентификационный код закупки (ИКЗ)"),
+                etp_name=(
+                    _field_after_label(description, "Площадка")
+                    or _field_after_label(description, "Электронная площадка")
+                    or _field_after_label(description, "Наименование электронной площадки")
+                ),
             )
         )
     return items
@@ -268,7 +303,12 @@ def fetch_rss_items(cfg: EisRssConfig) -> list[EisRssItem]:
     return parse_rss_items(resp.text)
 
 
-def run_eis_rss_poll(cfg: EisRssConfig, db_path: Path) -> EisRssPollResult:
+def run_eis_rss_poll(
+    cfg: EisRssConfig,
+    db_path: Path,
+    *,
+    update_query_label: bool = True,
+) -> EisRssPollResult:
     started = datetime.now(timezone.utc).replace(microsecond=0)
     errors: list[str] = []
     items: list[EisRssItem] = []
@@ -286,6 +326,7 @@ def run_eis_rss_poll(cfg: EisRssConfig, db_path: Path) -> EisRssPollResult:
         finished_at_utc=finished,
         ok=not errors,
         errors=errors,
+        update_query_label=update_query_label,
     )
     return EisRssPollResult(
         ok=not errors,
@@ -295,3 +336,17 @@ def run_eis_rss_poll(cfg: EisRssConfig, db_path: Path) -> EisRssPollResult:
         items=items,
         run_id=run_id,
     )
+
+
+def run_eis_rss_catalog_ktru_poll(cfg: EisRssConfig, db_path: Path, ktru_code: str) -> EisRssPollResult:
+    code = str(ktru_code or "").strip()
+    labeled = EisRssConfig(
+        rss_url=rss_url_for_ktru(cfg.rss_url, code),
+        timeout=cfg.timeout,
+        query_label=f"catalog_ktru:{code}",
+        user_agent=cfg.user_agent,
+    )
+    res = run_eis_rss_poll(labeled, db_path, update_query_label=False)
+    if res.ok and code:
+        record_rss_ktru_hints(db_path, [x.reg_number for x in res.items], code)
+    return res

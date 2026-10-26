@@ -1,0 +1,498 @@
+{
+  "id": 176636,
+  "code": "31.01.11.150-00000003",
+  "version": 5,
+  "inclusionDate": "2019-11-08T07:13:11",
+  "publishDate": "2026-04-16T14:19:42",
+  "name": "Стул на металлическом каркасе",
+  "actual": true,
+  "applicationDateStart": "2026-04-28T21:00:00",
+  "applicationDateEnd": null,
+  "signatureFileGuid": null,
+  "cancelDate": null,
+  "cancelReason": null,
+  "description": null,
+  "isTemplate": false,
+  "externalCode": null,
+  "parentCode": "31.01.11.150-00000004",
+  "parentVersion": 5,
+  "parentExternalCode": null,
+  "versionStatus": "ACTIVE",
+  "versionCode": null,
+  "updateDate": "2026-04-16T14:19:42",
+  "okpd2": {
+    "code": "31.01.11.150",
+    "parentCode": "31.01.11",
+    "name": "Мебель для сидения, преимущественно с металлическим каркасом",
+    "comment": null,
+    "actual": true,
+    "hasChildren": true
+  },
+  "industryClassifier": null,
+  "okeis": [
+    {
+      "code": "796",
+      "fullName": "Штука",
+      "section": "1",
+      "oosGroup": 7,
+      "localName": "ШТ",
+      "internationalName": "PCE; NMB",
+      "localSymbol": "шт",
+      "internationalSymbol": "pc; 1",
+      "actual": true,
+      "isTemporaryForKtru": false
+    }
+  ],
+  "attachments": [],
+  "characteristics": [
+    {
+      "id": 881277,
+      "code": "94b59978-4",
+      "name": "Вид материала спинки",
+      "isActual": true,
+      "isRequired": false,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 2,
+        "name": "Изменемая заказчиком с выбором одного значения"
+      },
+      "characteristicChoiceType": {
+        "id": 2,
+        "name": "Множественный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315882,
+          "qualityDescription": "Металл",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881277,
+          "characteristicCode": "94b59978-4",
+          "characteristicName": "Вид материала спинки",
+          "valueCode": "c98c9acd-2"
+        },
+        {
+          "id": 5315883,
+          "qualityDescription": "Пластик",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881277,
+          "characteristicCode": "94b59978-4",
+          "characteristicName": "Вид материала спинки",
+          "valueCode": "bf533f86-e"
+        },
+        {
+          "id": 5315884,
+          "qualityDescription": "Дерево",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881277,
+          "characteristicCode": "94b59978-4",
+          "characteristicName": "Вид материала спинки",
+          "valueCode": "a3d81b08-3"
+        }
+      ]
+    },
+    {
+      "id": 881278,
+      "code": "a64c21d9-c",
+      "name": "Наличие подлокотников",
+      "isActual": true,
+      "isRequired": false,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 2,
+        "name": "Изменемая заказчиком с выбором одного значения"
+      },
+      "characteristicChoiceType": {
+        "id": 2,
+        "name": "Множественный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315885,
+          "qualityDescription": "Нет",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881278,
+          "characteristicCode": "a64c21d9-c",
+          "characteristicName": "Наличие подлокотников",
+          "valueCode": "067f86f7-6"
+        },
+        {
+          "id": 5315886,
+          "qualityDescription": "Да",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881278,
+          "characteristicCode": "a64c21d9-c",
+          "characteristicName": "Наличие подлокотников",
+          "valueCode": "928da9fa-9"
+        }
+      ]
+    },
+    {
+      "id": 881279,
+      "code": "48b1fe49-c",
+      "name": "Складная конструкция",
+      "isActual": true,
+      "isRequired": false,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 2,
+        "name": "Изменемая заказчиком с выбором одного значения"
+      },
+      "characteristicChoiceType": {
+        "id": 2,
+        "name": "Множественный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315887,
+          "qualityDescription": "Да",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881279,
+          "characteristicCode": "48b1fe49-c",
+          "characteristicName": "Складная конструкция",
+          "valueCode": "29d0dbfb-2"
+        },
+        {
+          "id": 5315888,
+          "qualityDescription": "Нет",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881279,
+          "characteristicCode": "48b1fe49-c",
+          "characteristicName": "Складная конструкция",
+          "valueCode": "f7982dd3-0"
+        }
+      ]
+    },
+    {
+      "id": 881280,
+      "code": "cfca308b-b",
+      "name": "Наличие пюпитра",
+      "isActual": true,
+      "isRequired": false,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 2,
+        "name": "Изменемая заказчиком с выбором одного значения"
+      },
+      "characteristicChoiceType": {
+        "id": 2,
+        "name": "Множественный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315889,
+          "qualityDescription": "Да",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881280,
+          "characteristicCode": "cfca308b-b",
+          "characteristicName": "Наличие пюпитра",
+          "valueCode": "f5e3d03c-7"
+        },
+        {
+          "id": 5315890,
+          "qualityDescription": "Нет",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881280,
+          "characteristicCode": "cfca308b-b",
+          "characteristicName": "Наличие пюпитра",
+          "valueCode": "f726abd9-4"
+        }
+      ]
+    },
+    {
+      "id": 881281,
+      "code": "8e50a5cd-4",
+      "name": "Наличие мягкого сидения",
+      "isActual": true,
+      "isRequired": true,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 1,
+        "name": "Неизменяемая заказчиком"
+      },
+      "characteristicChoiceType": {
+        "id": 1,
+        "name": "Единственный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315891,
+          "qualityDescription": "Да",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881281,
+          "characteristicCode": "8e50a5cd-4",
+          "characteristicName": "Наличие мягкого сидения",
+          "valueCode": "b9a85776-1"
+        }
+      ]
+    },
+    {
+      "id": 881282,
+      "code": "cf3a76b9-4",
+      "name": "Наличие мягкой спинки",
+      "isActual": true,
+      "isRequired": true,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 1,
+        "name": "Неизменяемая заказчиком"
+      },
+      "characteristicChoiceType": {
+        "id": 1,
+        "name": "Единственный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315892,
+          "qualityDescription": "Да",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881282,
+          "characteristicCode": "cf3a76b9-4",
+          "characteristicName": "Наличие мягкой спинки",
+          "valueCode": "bc67b6d0-b"
+        }
+      ]
+    },
+    {
+      "id": 881283,
+      "code": "8d783392-c",
+      "name": "Вид материала сидения",
+      "isActual": true,
+      "isRequired": false,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 2,
+        "name": "Изменемая заказчиком с выбором одного значения"
+      },
+      "characteristicChoiceType": {
+        "id": 2,
+        "name": "Множественный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315893,
+          "qualityDescription": "Дерево",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881283,
+          "characteristicCode": "8d783392-c",
+          "characteristicName": "Вид материала сидения",
+          "valueCode": "f82f77b4-a"
+        },
+        {
+          "id": 5315894,
+          "qualityDescription": "Металл",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881283,
+          "characteristicCode": "8d783392-c",
+          "characteristicName": "Вид материала сидения",
+          "valueCode": "633e3a94-4"
+        },
+        {
+          "id": 5315895,
+          "qualityDescription": "Пластик",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881283,
+          "characteristicCode": "8d783392-c",
+          "characteristicName": "Вид материала сидения",
+          "valueCode": "3de093c8-4"
+        }
+      ]
+    },
+    {
+      "id": 881284,
+      "code": "ed7244a8-a",
+      "name": "Форма основания",
+      "isActual": true,
+      "isRequired": false,
+      "characteristicType": {
+        "id": 1,
+        "name": "Качественная"
+      },
+      "characteristicKind": {
+        "id": 2,
+        "name": "Изменемая заказчиком с выбором одного значения"
+      },
+      "characteristicChoiceType": {
+        "id": 2,
+        "name": "Множественный выбор"
+      },
+      "characteristicValues": [
+        {
+          "id": 5315896,
+          "qualityDescription": "Ножки",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881284,
+          "characteristicCode": "ed7244a8-a",
+          "characteristicName": "Форма основания",
+          "valueCode": "b329983b-3"
+        },
+        {
+          "id": 5315897,
+          "qualityDescription": "Полозья",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881284,
+          "characteristicCode": "ed7244a8-a",
+          "characteristicName": "Форма основания",
+          "valueCode": "5eeb39b9-1"
+        },
+        {
+          "id": 5315898,
+          "qualityDescription": "Колесные опоры",
+          "okei": null,
+          "concreteValue": null,
+          "minValue": null,
+          "maxValue": null,
+          "productCharacteristic": null,
+          "minMathNotation": null,
+          "maxMathNotation": null,
+          "format": null,
+          "characteristicId": 881284,
+          "characteristicCode": "ed7244a8-a",
+          "characteristicName": "Форма основания",
+          "valueCode": "33569f97-9"
+        }
+      ]
+    }
+  ],
+  "classifiers": [],
+  "products": [],
+  "standarts": [],
+  "rubricators": [
+    {
+      "code": "128",
+      "name": "Мебель"
+    }
+  ]
+}

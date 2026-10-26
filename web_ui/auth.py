@@ -192,11 +192,18 @@ def login_redirect_url(next_path: str | None) -> str:
 
 def ui_context(request: Request) -> dict[str, Any]:
     user = session_username(request)
+    try:
+        from rts_pp_publish_service import publish_enabled as _pp_pub_on
+
+        pub_on = bool(_pp_pub_on())
+    except Exception:
+        pub_on = False
     return {
         "web_auth_enabled": auth_enabled(),
         "web_user": user,
         "web_users_file": str(_USERS_FILE) if _USERS_FILE else "",
         "settings_admin": is_settings_admin(user),
+        "pp_publish_enabled": pub_on,
     }
 
 
