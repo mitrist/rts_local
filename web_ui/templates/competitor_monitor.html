@@ -1,0 +1,343 @@
+{% extends "base.html" %}
+{% block content %}
+<h2>Монитор конкурентов</h2>
+
+{% if flash_ok %}<div class="msg ok">{{ flash_ok }}</div>{% endif %}
+{% if flash_err %}<div class="msg err">{{ flash_err }}</div>{% endif %}
+
+<div class="card">
+  <h3>Сессия заказчика</h3>
+  <p class="hint">
+    Профиль расширения: <code>{{ customer_profile }}</code>.
+    Файл: <code>{{ paths.customer_monitor_cookie }}</code>.
+  </p>
+  {% if cookie_status.file_exists %}
+  <p class="hint">
+    {{ cookie_status.cookie_chars }} символов.
+    {% if cookie_status.probe_ok is sameas true %}
+      Сессия жива{% if cookie_status.probe_items_count is not none %}, в пробе search {{ cookie_status.probe_items_count }} поз.{% endif %}.
+    {% elif cookie_status.probe_ok is sameas false %}
+      Проверка не прошла ({{ cookie_status.probe_reason or '—' }}).
+    {% endif %}
+  </p>
+  {% else %}
+  <p class="msg err">Cookie не сохранён. Войдите в ЛК заказчика и отправьте cookie через расширение.</p>
+  {% endif %}
+</div>
+
+<div class="card" id="competitor-job"
+     data-running="{{ '1' if settings.job_status == 'running' else '0' }}"
+     data-status-url="{{ request.url_for('competitor_monitor_status') }}">
+  <h3>Опрос</h3>
+  <p class="hint" id="competitor-job-line">
+    Статус: <strong id="competitor-job-status">{{ settings.job_status }}</strong>.
+    <span id="competitor-job-progress">{{ settings.job_progress }}</span>
+  </p>
+  {% if settings.job_error %}
+  <p class="msg err" id="competitor-job-error">{{ settings.job_error }}</p>
+  {% else %}
+  <p class="msg err" id="competitor-job-error" hidden></p>
+  {% endif %}
+  <p class="hint">
+    Следующий автозапуск: {{ next_run_display or '—' }}.
+    Последний финиш: {{ last_finished_display or '—' }}.
+    Страница реестра — 50 позиций, пауза 3 с.
+  </p>
+  <form method="post" action="{{ request.url_for('action_competitor_monitor_run') }}" class="eis-submit-row">
+    <input type="hidden" name="scope" value="list">
+    <button type="submit">Опрос списка</button>
+  </form>
+  <form method="post" action="{{ request.url_for('action_competitor_monitor_run') }}" class="preoffer-form" style="margin-top:0.75rem">
+    <input type="hidden" name="scope" value="one">
+    <label>
+      <span>Один КТРУ, в том числе вне списка</span>
+      <input type="text" name="ktru_code" placeholder="31.01.12.122-00000004" autocomplete="off">
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Опрос одного КТРУ</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Расписание</h3>
+  <form method="post" action="{{ request.url_for('action_competitor_monitor_save') }}" class="preoffer-form">
+    <label class="checkbox-row">
+      <input type="checkbox" name="enabled" value="1" {% if settings.enabled %}checked{% endif %}>
+      <span>Автоопрос включён</span>
+    </label>
+    <label>
+      <span>Интервал</span>
+      <select name="interval_days">
+        <option value="7" {% if settings.interval_days == 7 %}selected{% endif %}>7 дней</option>
+        <option value="14" {% if settings.interval_days == 14 %}selected{% endif %}>14 дней</option>
+      </select>
+    </label>
+    <label>
+      <span>День недели (МСК)</span>
+      <select name="weekday">
+        {% for value, label in weekdays %}
+        <option value="{{ value }}" {% if settings.weekday == value %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>
+      <span>Час (МСК)</span>
+      <input type="number" name="hour_msk" min="0" max="23" value="{{ settings.hour_msk }}">
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Сохранить расписание</button>
+    </div>
+  </form>
+  <h4>Коды КТРУ</h4>
+  {% if settings.ktru_codes %}
+  <ul>
+    {% for code in settings.ktru_codes %}
+    <li>
+      <code>{{ code }}</code>
+      <form method="post" action="{{ request.url_for('action_competitor_monitor_remove_ktru') }}" class="inline-form">
+        <input type="hidden" name="ktru_code" value="{{ code }}">
+        <button type="submit" class="link-button">Убрать</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="hint">Список пуст. Автоопрос не стартует, пока не добавлен хотя бы один код.</p>
+  {% endif %}
+  <form method="post" action="{{ request.url_for('action_competitor_monitor_add_ktru') }}" class="preoffer-form">
+    <label>
+      <span>Добавить КТРУ</span>
+      <input type="text" name="ktru_code" placeholder="31.01.11.150-00000003" autocomplete="off">
+    </label>
+    <div class="eis-submit-row">
+      <button type="submit">Добавить</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Текущее состояние</h3>
+  {% if ktru_options %}
+  <form method="get" action="{{ request.url_for('page_competitor_monitor') }}" class="preoffer-form">
+    <label>
+      <span>КТРУ</span>
+      <select name="ktru" onchange="this.form.submit()">
+        {% for code in ktru_options %}
+        <option value="{{ code }}" {% if code == selected_ktru %}selected{% endif %}>{{ code }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
+  {% if view %}
+  <p class="hint">Снимок: {{ view.snapshot_at or '—' }}. Свои предложения (ИНН {{ own_inn }}) в конкурентные показатели не входят. Наших карточек: {{ view.own_offer_count }}.</p>
+  <p>
+    Опубликованных предложений: <strong>{{ view.offer_count }}</strong>.
+    Поставщиков: <strong>{{ view.supplier_count }}</strong>.
+    Цена мин / медиана / макс: <strong>{{ view.price_min }}</strong> / <strong>{{ view.price_median }}</strong> / <strong>{{ view.price_max }}</strong>.
+  </p>
+  <p class="hint">Медиана минимального срока поставки: {{ view.delivery_median }} дн. Медиана минимальной партии: {{ view.quantity_median }}.</p>
+  {% if view.countries %}
+  <p class="hint">Страны: {% for row in view.countries %}{{ row.name }} ({{ row.count }}){% if not loop.last %}, {% endif %}{% endfor %}.</p>
+  {% endif %}
+  {% else %}
+  <p class="hint">По этому КТРУ ещё нет снимка.</p>
+  {% endif %}
+  {% else %}
+  <p class="hint">Снимков ещё нет. Запустите опрос списка или одного КТРУ.</p>
+  {% endif %}
+</div>
+
+{% if view %}
+<div class="card">
+  <h3>Поставщики</h3>
+  {% if view.suppliers %}
+  <table class="eis-table">
+    <thead><tr><th>Поставщик</th><th>ИНН</th><th>Позиций</th></tr></thead>
+    <tbody>
+      {% for row in view.suppliers %}
+      <tr><td>{{ row.name }}</td><td><code>{{ row.inn }}</code></td><td>{{ row.positions }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Конкурентных предложений нет.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Цена по субъекту</h3>
+  {% if view.subjects %}
+  <table class="eis-table">
+    <thead><tr><th>Субъект</th><th>Позиций</th><th>Мин</th><th>Медиана</th><th>Макс</th><th>Наши</th></tr></thead>
+    <tbody>
+      {% for row in view.subjects %}
+      <tr>
+        <td>{{ row.name }}</td><td>{{ row.n }}</td><td>{{ row.min }}</td><td>{{ row.median }}</td><td>{{ row.max }}</td><td>{{ row.own }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Нет цен по субъектам.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Варианты характеристик</h3>
+  {% if view.variants %}
+  <table class="eis-table">
+    <thead><tr><th>Вариант</th><th>Позиций</th><th>Мин</th><th>Медиана</th><th>Макс</th><th>Наши</th></tr></thead>
+    <tbody>
+      {% for row in view.variants %}
+      <tr>
+        <td>{{ row.label }}</td><td>{{ row.n }}</td><td>{{ row.min }}</td><td>{{ row.median }}</td><td>{{ row.max }}</td><td>{{ row.own }}</td>
+      </tr>
+      {% if row.subjects %}
+      <tr>
+        <td colspan="6">
+          <details>
+            <summary>Субъекты этого варианта ({{ row.subjects|length }})</summary>
+            <table class="eis-table">
+              <thead><tr><th>Субъект</th><th>Мин</th><th>Медиана</th><th>Макс</th><th>Наши</th></tr></thead>
+              <tbody>
+                {% for sub in row.subjects %}
+                <tr><td>{{ sub.name }}</td><td>{{ sub.min }}</td><td>{{ sub.median }}</td><td>{{ sub.max }}</td><td>{{ sub.own }}</td></tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="hint">Нет конкурентных вариантов.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h3>Цена вариантов во времени</h3>
+  <p class="hint">Медиана конкурентов. Мин и максимум рисуются, когда выбран один вариант. Поставщиков на графике нет.</p>
+  <div id="competitor-chart-picks"></div>
+  <div style="position:relative;height:320px;margin-top:0.75rem">
+    <canvas id="competitor-price-chart" aria-label="Цена вариантов по снимкам"></canvas>
+  </div>
+  <p id="competitor-chart-empty" class="hint" hidden>Для графика ещё нет второй точки или цен.</p>
+  <script id="competitor-chart-data" type="application/json">{{ view.chart|tojson }}</script>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" crossorigin="anonymous"></script>
+<script>
+(function () {
+  var job = document.getElementById("competitor-job");
+  if (job && job.getAttribute("data-running") === "1") {
+    var url = job.getAttribute("data-status-url");
+    var timer = setInterval(function () {
+      fetch(url, { headers: { "Accept": "application/json" } })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          var statusEl = document.getElementById("competitor-job-status");
+          var progressEl = document.getElementById("competitor-job-progress");
+          var errorEl = document.getElementById("competitor-job-error");
+          if (statusEl) statusEl.textContent = data.job_status || "";
+          if (progressEl) progressEl.textContent = data.job_progress || "";
+          if (errorEl) {
+            errorEl.hidden = !data.job_error;
+            errorEl.textContent = data.job_error || "";
+          }
+          if (data.job_status && data.job_status !== "running") {
+            clearInterval(timer);
+            window.location.reload();
+          }
+        })
+        .catch(function () {});
+    }, 2000);
+  }
+
+  var dataEl = document.getElementById("competitor-chart-data");
+  var canvas = document.getElementById("competitor-price-chart");
+  var picks = document.getElementById("competitor-chart-picks");
+  var emptyEl = document.getElementById("competitor-chart-empty");
+  if (!dataEl || !canvas || !picks || typeof Chart === "undefined") return;
+  var payload = {};
+  try { payload = JSON.parse(dataEl.textContent || "{}"); } catch (e) { payload = {}; }
+  var labels = payload.labels || [];
+  var series = payload.series || [];
+  if (!labels.length || !series.length) {
+    canvas.hidden = true;
+    if (emptyEl) emptyEl.hidden = false;
+    return;
+  }
+  series.forEach(function (row, index) {
+    var id = "competitor-series-" + index;
+    var label = document.createElement("label");
+    label.className = "checkbox-row";
+    label.style.display = "block";
+    var input = document.createElement("input");
+    input.type = "checkbox";
+    input.id = id;
+    input.checked = !!row.checked;
+    input.addEventListener("change", draw);
+    var span = document.createElement("span");
+    span.textContent = row.label || row.key || "Вариант";
+    label.appendChild(input);
+    label.appendChild(span);
+    picks.appendChild(label);
+    row._input = input;
+  });
+  var chart = null;
+  var palette = ["#3b6d11", "#1d4e89", "#8a3ffc", "#b45309", "#0f766e", "#9f1239", "#365314", "#1e3a8a"];
+  function draw() {
+    var selected = series.filter(function (row) { return row._input && row._input.checked; });
+    var datasets = [];
+    selected.forEach(function (row, index) {
+      var color = palette[index % palette.length];
+      datasets.push({
+        label: row.label || "Медиана",
+        data: row.median || [],
+        borderColor: color,
+        backgroundColor: color,
+        spanGaps: true,
+        tension: 0.15
+      });
+      if (selected.length === 1) {
+        datasets.push({
+          label: "Мин",
+          data: row.min || [],
+          borderColor: color,
+          borderDash: [4, 4],
+          pointRadius: 0,
+          spanGaps: true
+        });
+        datasets.push({
+          label: "Макс",
+          data: row.max || [],
+          borderColor: color,
+          borderDash: [2, 3],
+          pointRadius: 0,
+          spanGaps: true
+        });
+      }
+    });
+    if (chart) chart.destroy();
+    chart = new Chart(canvas, {
+      type: "line",
+      data: { labels: labels, datasets: datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: "bottom" } },
+        scales: { y: { title: { display: true, text: "Цена, ₽" } } }
+      }
+    });
+  }
+  draw();
+})();
+</script>
+{% endblock %}

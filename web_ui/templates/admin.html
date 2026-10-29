@@ -199,9 +199,10 @@
       Cron: {% if pp_monitor_cron_status.cron_mode %}включён{% else %}выключен{% endif %}
       (env <code>RTS_PP_MONITOR_CRON</code>).
       Env-монитор: {% if env_pp_monitor_enabled %}включён{% else %}выключен{% endif %}
-      (<code>RTS_PP_MONITOR</code> — должен быть 1 на сервере).
-      Журнал и ручной опрос — на странице
-      <a href="{{ request.url_for('page_rts_pp_monitor') }}">Монитор ПП РТС</a>.
+      (<code>RTS_PP_MONITOR</code> держите выключенным: вместо него работает монитор конкурентов).
+      Опрос реестра и аналитика — на странице
+      <a href="{{ request.url_for('page_competitor_monitor') }}">Монитор конкурентов</a>.
+      Частый опрос (<code>RTS_PP_MONITOR</code>) для этого экрана не используется.
     </p>
     <p class="hint">
       Фактически активен:
@@ -437,8 +438,8 @@
   <summary class="admin-section-summary">Уведомления: монитор ПП РТС</summary>
   <div class="admin-section-body">
     <p class="hint">
-      Отдельные chat id для «Новое ПП конкурента». Управление опросом и журнал — на странице
-      <a href="{{ request.url_for('page_rts_pp_monitor') }}">Монитор ПП РТС</a>.
+      Отдельные chat id для старых уведомлений о новых ПП. Опрос реестра — на странице
+      <a href="{{ request.url_for('page_competitor_monitor') }}">Монитор конкурентов</a>.
       Файл: <code>{{ paths.pp_monitor_settings }}</code>.
     </p>
     <form method="post" action="{{ request.url_for('action_admin_pp_monitor_notify_save') }}" class="preoffer-form">

@@ -75,6 +75,8 @@ from auto_monitor_draft_settings import (
 from eis_analytics_db import (
     DEFAULT_DB_NAME,
     analytics_db_path,
+    list_competitor_ktru_codes,
+    load_competitor_ktru,
     enrich_notice_characteristics,
     delete_pp_monitor_draft,
     delete_rts_pp_draft,
@@ -202,6 +204,7 @@ from rts_customer_pp_api import (
     customer_cookie_path,
     find_offer_item,
     list_characteristic_rows,
+    OWN_PARTICIPANT_INN,
     load_customer_cookie,
     probe_customer_session,
 )
@@ -211,8 +214,23 @@ from rts_pp_monitor import (
     run_rts_pp_monitor_backfill,
     run_rts_pp_monitor_poll,
 )
+from competitor_monitor import (
+    build_ktru_view,
+    start_competitor_poll_async,
+    supervisor_tick as competitor_supervisor_tick,
+)
+from competitor_monitor_settings import (
+    WEEKDAY_LABELS,
+    add_ktru_code as add_competitor_ktru,
+    format_msk as format_competitor_msk,
+    load_settings as load_competitor_settings,
+    remove_ktru_code as remove_competitor_ktru,
+    save_schedule as save_competitor_schedule,
+    settings_path as competitor_settings_path,
+)
 from rts_pp_monitor_settings import (
     apply_admin_runtime_settings,
+    parse_ktru_codes,
     form_from_settings as pp_monitor_form_from_settings,
     MIN_POLL_INTERVAL_MIN,
     MAX_POLL_INTERVAL_MIN,
@@ -500,6 +518,7 @@ _auto_participate_lock = threading.Lock()
 _auto_participate_supervisor_task: asyncio.Task[None] | None = None
 _rts_pp_monitor_lock = threading.Lock()
 _rts_pp_monitor_supervisor_task: asyncio.Task[None] | None = None
+_competitor_monitor_supervisor_task: asyncio.Task[None] | None = None
 _rts_pp_monitor_polling_now: bool = False
 _rts_pp_monitor_next_poll_unix: float | None = None
 _virtual_pp_lock = threading.Lock()
@@ -735,6 +754,14 @@ def _auto_monitor_draft_settings_path() -> Path:
 
 def _pp_monitor_settings_path() -> Path:
     return pp_monitor_settings_path(_META)
+
+
+def _competitor_settings_path() -> Path:
+    return competitor_settings_path(_META)
+
+
+def _competitor_monitor_tick() -> None:
+    competitor_supervisor_tick(_META, _eis_analytics_db_path())
 
 
 def _customer_monitor_cookie_path() -> Path:
@@ -1458,6 +1485,7 @@ def _pp_core_variants_payload(code: str, rows: list[dict[str, Any]], meta: dict[
         "ok": True,
         "ktru_code": code,
         "ktru_codes": list_pp_core_ktru_codes(db),
+        "ktru_options": _core_ktru_options(db),
         "history_available": _eis_history_db_path().is_file(),
         "meta": meta,
         "variants": [
@@ -2916,10 +2944,26 @@ async def _auto_participate_supervisor_loop() -> None:
         raise
 
 
+async def _competitor_monitor_supervisor_loop() -> None:
+    await asyncio.sleep(30)
+    try:
+        while True:
+            try:
+                await asyncio.to_thread(_competitor_monitor_tick)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                _LOG_WEB.exception("Competitor monitor supervisor")
+            await asyncio.sleep(60)
+    except asyncio.CancelledError:
+        raise
+
+
 @asynccontextmanager
 async def _app_lifespan(app: FastAPI):
     global _eis_supervisor_task, _eis_rss_supervisor_task, _eis_html_supervisor_task
     global _auto_participate_supervisor_task, _rts_pp_monitor_supervisor_task
+    global _competitor_monitor_supervisor_task
     global _virtual_pp_supervisor_task
     app.state.analytics_db_path = str(_eis_analytics_db_path())
     _health_stop = asyncio.Event()
@@ -2929,6 +2973,7 @@ async def _app_lifespan(app: FastAPI):
     _eis_html_supervisor_task = asyncio.create_task(_eis_html_auto_fetch_supervisor_loop())
     _auto_participate_supervisor_task = asyncio.create_task(_auto_participate_supervisor_loop())
     _rts_pp_monitor_supervisor_task = asyncio.create_task(_rts_pp_monitor_supervisor_loop())
+    _competitor_monitor_supervisor_task = asyncio.create_task(_competitor_monitor_supervisor_loop())
     _virtual_pp_supervisor_task = asyncio.create_task(_virtual_pp_supervisor_loop())
     yield
     _health_stop.set()
@@ -2972,6 +3017,13 @@ async def _app_lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         _rts_pp_monitor_supervisor_task = None
+    if _competitor_monitor_supervisor_task is not None:
+        _competitor_monitor_supervisor_task.cancel()
+        try:
+            await _competitor_monitor_supervisor_task
+        except asyncio.CancelledError:
+            pass
+        _competitor_monitor_supervisor_task = None
     if _virtual_pp_supervisor_task is not None:
         _virtual_pp_supervisor_task.cancel()
         try:
@@ -4002,6 +4054,143 @@ def action_admin_ktru_cache_extend_all(
         request.session["admin_flash_err"] = "Кэш КТРУ пуст — нечего продлевать."
         return RedirectResponse(back, status_code=303)
     request.session["admin_flash_ok"] = f"Продлено {len(updated)} файлов кэша КТРУ на 7 дней."
+    return RedirectResponse(back, status_code=303)
+
+
+@app.get("/competitor-monitor", name="page_competitor_monitor")
+def page_competitor_monitor(
+    request: Request,
+    _: SettingsAdmin,
+    ktru: Annotated[str, Query()] = "",
+) -> Any:
+    settings = load_competitor_settings(_competitor_settings_path())
+    db_path = _eis_analytics_db_path()
+    codes = list_competitor_ktru_codes(db_path)
+    selected = str(ktru or "").strip()
+    if selected not in codes:
+        selected = codes[0] if codes else ""
+    view = None
+    if selected:
+        payload = load_competitor_ktru(db_path, selected)
+        if payload.get("state"):
+            view = build_ktru_view(payload)
+    ctx: dict[str, Any] = {
+        "request": request,
+        "title": "Монитор конкурентов — RTS",
+        "active": "competitor_monitor",
+        "paths": paths_dict(request),
+        "settings": settings,
+        "weekdays": list(enumerate(WEEKDAY_LABELS)),
+        "cookie_status": _customer_monitor_cookie_status(),
+        "customer_profile": CUSTOMER_MONITOR_PROFILE,
+        "next_run_display": format_competitor_msk(str(settings.get("next_run_at_utc") or "")),
+        "last_finished_display": format_competitor_msk(str(settings.get("last_finished_at_utc") or "")),
+        "ktru_options": codes,
+        "selected_ktru": selected,
+        "view": view,
+        "own_inn": OWN_PARTICIPANT_INN,
+        "flash_ok": request.session.pop("competitor_monitor_flash_ok", None),
+        "flash_err": request.session.pop("competitor_monitor_flash_err", None),
+    }
+    ctx.update(web_auth_ui_context(request))
+    return _templates.TemplateResponse("competitor_monitor.html", ctx)
+
+
+@app.get("/competitor-monitor/status", name="competitor_monitor_status")
+def competitor_monitor_status(_: SettingsAdmin) -> dict[str, Any]:
+    settings = load_competitor_settings(_competitor_settings_path())
+    return {
+        "job_status": settings.get("job_status") or "idle",
+        "job_progress": settings.get("job_progress") or "",
+        "job_error": settings.get("job_error") or "",
+        "last_finished_display": format_competitor_msk(str(settings.get("last_finished_at_utc") or "")),
+    }
+
+
+@app.post("/action/competitor-monitor-save", name="action_competitor_monitor_save")
+def action_competitor_monitor_save(
+    request: Request,
+    _: SettingsAdmin,
+    enabled: Annotated[str, Form()] = "",
+    interval_days: Annotated[str, Form()] = "14",
+    weekday: Annotated[str, Form()] = "0",
+    hour_msk: Annotated[str, Form()] = "6",
+) -> RedirectResponse:
+    back = request.url_for("page_competitor_monitor")
+    try:
+        interval = int(interval_days)
+        day = int(weekday)
+        hour = int(hour_msk)
+    except ValueError:
+        request.session["competitor_monitor_flash_err"] = "Некорректное расписание."
+        return RedirectResponse(back, status_code=303)
+    save_competitor_schedule(
+        _competitor_settings_path(),
+        enabled=enabled in ("1", "on", "true"),
+        interval_days=interval,
+        weekday=day,
+        hour_msk=hour,
+    )
+    request.session["competitor_monitor_flash_ok"] = "Расписание сохранено."
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/action/competitor-monitor-add-ktru", name="action_competitor_monitor_add_ktru")
+def action_competitor_monitor_add_ktru(
+    request: Request,
+    _: SettingsAdmin,
+    ktru_code: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    back = request.url_for("page_competitor_monitor")
+    try:
+        add_competitor_ktru(_competitor_settings_path(), ktru_code)
+    except ValueError as exc:
+        request.session["competitor_monitor_flash_err"] = str(exc)
+        return RedirectResponse(back, status_code=303)
+    request.session["competitor_monitor_flash_ok"] = "КТРУ добавлен в расписание."
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/action/competitor-monitor-remove-ktru", name="action_competitor_monitor_remove_ktru")
+def action_competitor_monitor_remove_ktru(
+    request: Request,
+    _: SettingsAdmin,
+    ktru_code: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    back = request.url_for("page_competitor_monitor")
+    remove_competitor_ktru(_competitor_settings_path(), ktru_code)
+    request.session["competitor_monitor_flash_ok"] = "КТРУ снят с расписания. Снимок сохранён."
+    return RedirectResponse(back, status_code=303)
+
+
+@app.post("/action/competitor-monitor-run", name="action_competitor_monitor_run")
+def action_competitor_monitor_run(
+    request: Request,
+    _: SettingsAdmin,
+    scope: Annotated[str, Form()] = "list",
+    ktru_code: Annotated[str, Form()] = "",
+) -> RedirectResponse:
+    back = request.url_for("page_competitor_monitor")
+    if scope == "one":
+        try:
+            codes = parse_ktru_codes([ktru_code])
+        except ValueError as exc:
+            request.session["competitor_monitor_flash_err"] = str(exc)
+            return RedirectResponse(back, status_code=303)
+        trigger = "manual_ktru"
+    else:
+        codes = list(load_competitor_settings(_competitor_settings_path()).get("ktru_codes") or [])
+        trigger = "manual_list"
+    message = start_competitor_poll_async(
+        _META,
+        _eis_analytics_db_path(),
+        codes=codes,
+        trigger=trigger,
+    )
+    if message:
+        request.session["competitor_monitor_flash_err"] = message
+    else:
+        request.session["competitor_monitor_flash_ok"] = "Опрос запущен."
     return RedirectResponse(back, status_code=303)
 
 
@@ -5212,6 +5401,7 @@ def page_pp_core(request: Request, _: Auth) -> Any:
         "paths": paths_dict(),
         "pp_publish_enabled": _pp_publish_enabled(),
         "default_ktru": default_core_ktru(db),
+        "ktru_options": _core_ktru_options(db),
         "history_available": _eis_history_db_path().is_file(),
         "chair_ktru": CHAIR_KTRU_CODE,
     }
@@ -5371,6 +5561,16 @@ def _ktru_display_name(db: Path, code: str) -> str:
         if name:
             return name
     return ktru_html_display_name(db, ktru)
+
+
+def _core_ktru_options(db: Path) -> list[dict[str, str]]:
+    """Positions that already have a saved demand-core snapshot."""
+    out: list[dict[str, str]] = []
+    for code in list_pp_core_ktru_codes(db):
+        name = _ktru_display_name(db, code)
+        out.append({"code": code, "name": name, "label": _format_ktru_option(code, name)})
+    out.sort(key=lambda item: (item["label"].casefold(), item["code"]))
+    return out
 
 
 def _virtual_ktru_options(db: Path, *, virtual_only: bool = False) -> list[dict[str, str]]:

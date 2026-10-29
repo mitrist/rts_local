@@ -81,9 +81,6 @@
   <p style="margin-top:0.75rem">
     <a href="{{ request.url_for('page_offer_matching') }}?ktru={{ match.ktru_code | urlencode }}">Подбор предложений</a>
     · <a href="{{ request.url_for('page_pp_monitor_sample_detail', offer_id=match.offer_price_list_item_id) }}">Образец ПП</a>
-    {% if match.stack_key %}
-    · <a href="{{ request.url_for('page_pp_monitor_chain_detail', stack_key=match.stack_key) }}">Цепочка ПП</a>
-    {% endif %}
   </p>
 </div>
 

@@ -83,11 +83,29 @@ def sqlite_busy_timeout_ms() -> int:
         return DEFAULT_SQLITE_BUSY_TIMEOUT_MS
 
 
+class _ClosingConnection(sqlite3.Connection):
+    """Close the file when the ``with`` block ends.
+
+    sqlite3's own context manager only commits or rolls back. On this
+    interpreter that leaves every ``with connect()`` file descriptor open
+    until the process hits the open-file limit and stops accepting HTTP.
+    """
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            return super().__exit__(exc_type, exc, tb)
+        finally:
+            try:
+                self.close()
+            except sqlite3.ProgrammingError:
+                pass
+
+
 def connect(path: Path, *, busy_timeout_ms: int | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     ms = sqlite_busy_timeout_ms() if busy_timeout_ms is None else max(0, int(busy_timeout_ms))
     timeout_sec = ms / 1000.0
-    conn = sqlite3.connect(str(path), timeout=timeout_sec)
+    conn = sqlite3.connect(str(path), timeout=timeout_sec, factory=_ClosingConnection)
     conn.row_factory = sqlite3.Row
     conn.execute(f"PRAGMA busy_timeout={ms}")
     conn.execute("PRAGMA foreign_keys = ON")
@@ -725,11 +743,71 @@ def init_db(conn: sqlite3.Connection) -> None:
         ON pp_eis_pp_match(is_exact_match, lag_minutes)
         """
     )
+    _init_competitor_monitor_tables(conn)
     conn.execute(
         "INSERT OR REPLACE INTO meta(key, value) VALUES('schema', ?)",
         (str(ANALYTICS_SCHEMA),),
     )
     conn.commit()
+
+
+def _init_competitor_monitor_tables(conn: sqlite3.Connection) -> None:
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS competitor_offers (
+          offer_price_list_item_id TEXT PRIMARY KEY,
+          ktru_code TEXT NOT NULL,
+          price_list_item_id INTEGER,
+          name TEXT NOT NULL DEFAULT '',
+          participant_inn TEXT NOT NULL DEFAULT '',
+          participant_name TEXT NOT NULL DEFAULT '',
+          participant_id TEXT NOT NULL DEFAULT '',
+          is_own INTEGER NOT NULL DEFAULT 0,
+          variant_key TEXT NOT NULL DEFAULT '',
+          variant_label TEXT NOT NULL DEFAULT '',
+          countries TEXT NOT NULL DEFAULT '',
+          min_delivery_days INTEGER,
+          min_quantity REAL,
+          median_price REAL,
+          link_date TEXT NOT NULL DEFAULT '',
+          validity_date TEXT NOT NULL DEFAULT '',
+          snapshot_at_utc TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_competitor_offers_ktru
+          ON competitor_offers(ktru_code);
+
+        CREATE TABLE IF NOT EXISTS competitor_offer_regions (
+          offer_price_list_item_id TEXT NOT NULL,
+          subject_code TEXT NOT NULL,
+          subject_name TEXT NOT NULL DEFAULT '',
+          unit_price REAL,
+          min_delivery_days INTEGER,
+          min_quantity REAL,
+          PRIMARY KEY (offer_price_list_item_id, subject_code)
+        );
+
+        CREATE TABLE IF NOT EXISTS competitor_variant_points (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          snapshot_at_utc TEXT NOT NULL,
+          ktru_code TEXT NOT NULL,
+          variant_key TEXT NOT NULL,
+          variant_label TEXT NOT NULL DEFAULT '',
+          offer_count INTEGER NOT NULL,
+          price_min REAL,
+          price_median REAL,
+          price_max REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_competitor_variant_points_ktru
+          ON competitor_variant_points(ktru_code, snapshot_at_utc);
+
+        CREATE TABLE IF NOT EXISTS competitor_ktru_state (
+          ktru_code TEXT PRIMARY KEY,
+          snapshot_at_utc TEXT NOT NULL,
+          offer_count INTEGER NOT NULL DEFAULT 0,
+          own_offer_count INTEGER NOT NULL DEFAULT 0
+        );
+        """
+    )
 
 
 def etp_name_from_rss_url(url: str) -> str:
@@ -8925,6 +9003,209 @@ def list_pp_monitor_findings_by_ktru(path: Path, ktru_code: str) -> list[dict[st
         if item:
             out.append(item)
     return out
+
+
+def replace_competitor_ktru_snapshot(
+    path: Path,
+    *,
+    ktru_code: str,
+    snapshot_at_utc: str,
+    offers: list[dict[str, Any]],
+    regions: list[dict[str, Any]],
+    points: list[dict[str, Any]],
+) -> None:
+    """Replace the current rows of one KTRU and append variant price points."""
+    code = str(ktru_code or "").strip()
+    if not code:
+        raise ValueError("ktru_code пуст")
+    own_count = sum(1 for row in offers if int(row.get("is_own") or 0))
+    with connect(path) as conn:
+        conn.execute("BEGIN")
+        conn.execute(
+            """
+            DELETE FROM competitor_offer_regions
+            WHERE offer_price_list_item_id IN (
+              SELECT offer_price_list_item_id FROM competitor_offers WHERE ktru_code = ?
+            )
+            """,
+            (code,),
+        )
+        conn.execute("DELETE FROM competitor_offers WHERE ktru_code = ?", (code,))
+        new_ids = [str(row.get("offer_price_list_item_id") or "") for row in offers]
+        new_ids = [item for item in new_ids if item]
+        for offset in range(0, len(new_ids), 400):
+            chunk = new_ids[offset : offset + 400]
+            marks = ",".join("?" for _ in chunk)
+            conn.execute(
+                f"DELETE FROM competitor_offer_regions WHERE offer_price_list_item_id IN ({marks})",
+                chunk,
+            )
+            conn.execute(
+                f"DELETE FROM competitor_offers WHERE offer_price_list_item_id IN ({marks})",
+                chunk,
+            )
+        conn.executemany(
+            """
+            INSERT INTO competitor_offers(
+              offer_price_list_item_id, ktru_code, price_list_item_id, name,
+              participant_inn, participant_name, participant_id, is_own,
+              variant_key, variant_label, countries, min_delivery_days, min_quantity,
+              median_price, link_date, validity_date, snapshot_at_utc
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    str(row.get("offer_price_list_item_id") or ""),
+                    code,
+                    row.get("price_list_item_id"),
+                    str(row.get("name") or ""),
+                    str(row.get("participant_inn") or ""),
+                    str(row.get("participant_name") or ""),
+                    str(row.get("participant_id") or ""),
+                    1 if row.get("is_own") else 0,
+                    str(row.get("variant_key") or ""),
+                    str(row.get("variant_label") or ""),
+                    str(row.get("countries") or ""),
+                    row.get("min_delivery_days"),
+                    row.get("min_quantity"),
+                    row.get("median_price"),
+                    str(row.get("link_date") or ""),
+                    str(row.get("validity_date") or ""),
+                    snapshot_at_utc,
+                )
+                for row in offers
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO competitor_offer_regions(
+              offer_price_list_item_id, subject_code, subject_name,
+              unit_price, min_delivery_days, min_quantity
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    str(row.get("offer_price_list_item_id") or ""),
+                    str(row.get("subject_code") or ""),
+                    str(row.get("subject_name") or ""),
+                    row.get("unit_price"),
+                    row.get("min_delivery_days"),
+                    row.get("min_quantity"),
+                )
+                for row in regions
+                if str(row.get("offer_price_list_item_id") or "") and str(row.get("subject_code") or "")
+            ],
+        )
+        conn.executemany(
+            """
+            INSERT INTO competitor_variant_points(
+              snapshot_at_utc, ktru_code, variant_key, variant_label,
+              offer_count, price_min, price_median, price_max
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            [
+                (
+                    snapshot_at_utc,
+                    code,
+                    str(row.get("variant_key") or ""),
+                    str(row.get("variant_label") or ""),
+                    int(row.get("offer_count") or 0),
+                    row.get("price_min"),
+                    row.get("price_median"),
+                    row.get("price_max"),
+                )
+                for row in points
+            ],
+        )
+        conn.execute(
+            """
+            INSERT INTO competitor_ktru_state(ktru_code, snapshot_at_utc, offer_count, own_offer_count)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(ktru_code) DO UPDATE SET
+              snapshot_at_utc = excluded.snapshot_at_utc,
+              offer_count = excluded.offer_count,
+              own_offer_count = excluded.own_offer_count
+            """,
+            (code, snapshot_at_utc, len(offers), own_count),
+        )
+        conn.commit()
+
+
+def list_competitor_ktru_codes(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    with connect(path) as conn:
+        rows = conn.execute(
+            "SELECT ktru_code FROM competitor_ktru_state ORDER BY ktru_code"
+        ).fetchall()
+    return [str(row["ktru_code"]) for row in rows]
+
+
+def load_competitor_ktru(path: Path, ktru_code: str) -> dict[str, Any]:
+    code = str(ktru_code or "").strip()
+    empty: dict[str, Any] = {
+        "state": None,
+        "offers": [],
+        "regions": [],
+        "points": [],
+    }
+    if not code or not path.is_file():
+        return empty
+    with connect(path) as conn:
+        state = conn.execute(
+            "SELECT ktru_code, snapshot_at_utc, offer_count, own_offer_count FROM competitor_ktru_state WHERE ktru_code = ?",
+            (code,),
+        ).fetchone()
+        offers = conn.execute(
+            """
+            SELECT offer_price_list_item_id, ktru_code, price_list_item_id, name,
+                   participant_inn, participant_name, participant_id, is_own,
+                   variant_key, variant_label, countries, min_delivery_days, min_quantity,
+                   median_price, link_date, validity_date, snapshot_at_utc
+            FROM competitor_offers
+            WHERE ktru_code = ?
+            ORDER BY participant_name, offer_price_list_item_id
+            """,
+            (code,),
+        ).fetchall()
+        regions = conn.execute(
+            """
+            SELECT r.offer_price_list_item_id, r.subject_code, r.subject_name,
+                   r.unit_price, r.min_delivery_days, r.min_quantity
+            FROM competitor_offer_regions r
+            JOIN competitor_offers o ON o.offer_price_list_item_id = r.offer_price_list_item_id
+            WHERE o.ktru_code = ?
+            """,
+            (code,),
+        ).fetchall()
+        points = conn.execute(
+            """
+            SELECT snapshot_at_utc, ktru_code, variant_key, variant_label,
+                   offer_count, price_min, price_median, price_max
+            FROM competitor_variant_points
+            WHERE ktru_code = ?
+            ORDER BY snapshot_at_utc, variant_key
+            """,
+            (code,),
+        ).fetchall()
+    return {
+        "state": dict(state) if state is not None else None,
+        "offers": [dict(row) for row in offers],
+        "regions": [dict(row) for row in regions],
+        "points": [dict(row) for row in points],
+    }
+
+
+def count_competitor_variant_points(path: Path, ktru_code: str) -> int:
+    code = str(ktru_code or "").strip()
+    if not code or not path.is_file():
+        return 0
+    with connect(path) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM competitor_variant_points WHERE ktru_code = ?",
+            (code,),
+        ).fetchone()
+    return int(row["n"] if row is not None else 0)
 
 
 def analytics_summary(path: Path, *, days: int = 30) -> dict[str, Any]:

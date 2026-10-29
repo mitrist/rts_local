@@ -36,6 +36,8 @@ KTRU_CODE_URL = "https://platform.rts-tender.ru/api-gateway/dictionary/ktru/code
 SEARCH_STATUS_PUBLISHED = 2
 SEARCH_SORT_LINK_DATE = 4
 SEARCH_SORT_DESC = 1
+SEARCH_PAGE_TAKE = 50
+OWN_PARTICIPANT_INN = "263605861830"
 
 PP_MONITOR_CARD_URL = "https://offers.rts-tender.ru/customer/offers/offer-item/{offer_price_list_item_id}"
 
@@ -80,6 +82,32 @@ class RegistryOfferSummary:
 
 
 CompareOfferSummary = RegistryOfferSummary
+
+
+@dataclass(slots=True)
+class RegistryDeliveryPlace:
+    oktmo_code: str
+    oktmo_name: str
+    unit_price: float | None
+    min_delivery_days: int | None
+    min_quantity: float | None
+
+
+@dataclass(slots=True)
+class RegistrySearchItem:
+    offer_price_list_item_id: str
+    price_list_item_id: int | None
+    ktru_code: str
+    name: str
+    participant_inn: str
+    participant_name: str
+    participant_id: str
+    is_own: bool
+    link_date: str
+    validity_date: str
+    countries: str
+    characteristics: list[dict[str, Any]]
+    places: list[RegistryDeliveryPlace]
 
 
 def customer_cookie_path(meta_dir: Path) -> Path:
@@ -480,6 +508,130 @@ def parse_search_response(data: dict[str, Any], *, ktru_code: str = "") -> tuple
         if summary is not None:
             out.append(summary)
     return out, total
+
+
+def _parse_optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    parsed = _parse_rts_price(value)
+    if parsed is None:
+        return None
+    return int(parsed)
+
+
+def _countries_label(raw: dict[str, Any]) -> str:
+    rows = raw.get("countriesOfOrigin")
+    if not isinstance(rows, list):
+        return ""
+    names: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return " · ".join(names)
+
+
+def _parse_delivery_place(raw: dict[str, Any]) -> RegistryDeliveryPlace | None:
+    oktmo = raw.get("oktmo")
+    code = ""
+    name = ""
+    if isinstance(oktmo, dict):
+        code = str(oktmo.get("code") or "").strip()
+        name = str(oktmo.get("name") or "").strip()
+    elif isinstance(oktmo, str):
+        code = oktmo.strip()
+    if not code and not name:
+        return None
+    return RegistryDeliveryPlace(
+        oktmo_code=code,
+        oktmo_name=name,
+        unit_price=_parse_rts_price(raw.get("unitPrice")),
+        min_delivery_days=_parse_optional_int(raw.get("minDeliveryDays")),
+        min_quantity=_parse_rts_price(raw.get("minQuantity")),
+    )
+
+
+def parse_search_item(raw: dict[str, Any], *, ktru_code: str = "") -> RegistrySearchItem | None:
+    """Full registry row for competitor analytics. Does not replace parse_search_summary."""
+    if not isinstance(raw, dict):
+        return None
+    oid = _protected_offer_id(raw)
+    if not oid:
+        return None
+    ktru_obj = raw.get("ktru") if isinstance(raw.get("ktru"), dict) else {}
+    code = str(ktru_obj.get("code") or ktru_code or "").strip()
+    participant = raw.get("participant") if isinstance(raw.get("participant"), dict) else {}
+    inn = str(participant.get("inn") or "").strip()
+    chars_raw = raw.get("ktruCharacteristics")
+    characteristics = [ch for ch in chars_raw if isinstance(ch, dict)] if isinstance(chars_raw, list) else []
+    places_raw = raw.get("deliveryPlaces")
+    places: list[RegistryDeliveryPlace] = []
+    if isinstance(places_raw, list):
+        for place in places_raw:
+            if not isinstance(place, dict):
+                continue
+            parsed = _parse_delivery_place(place)
+            if parsed is not None:
+                places.append(parsed)
+    price_list_item_id: int | None = None
+    try:
+        if raw.get("id") is not None:
+            price_list_item_id = int(raw["id"])
+    except (TypeError, ValueError):
+        price_list_item_id = None
+    return RegistrySearchItem(
+        offer_price_list_item_id=oid,
+        price_list_item_id=price_list_item_id,
+        ktru_code=code,
+        name=str(raw.get("name") or "").strip(),
+        participant_inn=inn,
+        participant_name=str(participant.get("name") or "").strip(),
+        participant_id=str(participant.get("id") or "").strip(),
+        is_own=inn == OWN_PARTICIPANT_INN,
+        link_date=str(raw.get("offerPriceListItemLinkDate") or "").strip(),
+        validity_date=_validity_from_search_item(raw),
+        countries=_countries_label(raw),
+        characteristics=characteristics,
+        places=places,
+    )
+
+
+def parse_search_items(data: dict[str, Any], *, ktru_code: str = "") -> tuple[list[RegistrySearchItem], int]:
+    items_raw = data.get("page")
+    if not isinstance(items_raw, list):
+        return [], 0
+    try:
+        total = int(data.get("total") or 0)
+    except (TypeError, ValueError):
+        total = len(items_raw)
+    out: list[RegistrySearchItem] = []
+    default_code = str(ktru_code or "").strip()
+    for raw in items_raw:
+        if not isinstance(raw, dict):
+            continue
+        item = parse_search_item(raw, ktru_code=default_code)
+        if item is not None:
+            out.append(item)
+    return out, total
+
+
+def search_registry_items(
+    cookie: str,
+    payload: dict[str, Any],
+    *,
+    timeout: float = _DEFAULT_TIMEOUT,
+) -> tuple[list[RegistrySearchItem], int]:
+    data = _request_json("POST", SEARCH_URL, cookie=cookie, json_body=payload, timeout=timeout)
+    if not isinstance(data, dict):
+        raise RtsCustomerPpApiError("Некорректный ответ search.", reason="api_error")
+    ktru_code = str(payload.get("ktruCode") or "").strip()
+    return parse_search_items(data, ktru_code=ktru_code)
 
 
 def search_registry_page(
