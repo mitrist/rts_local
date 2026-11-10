@@ -5350,13 +5350,13 @@ def api_rts_ktru_template(
 
 @app.get("/api/rts/pp/oktmo-subjects", name="api_rts_pp_oktmo_subjects")
 def api_rts_pp_oktmo_subjects(_: Auth) -> dict[str, Any]:
-    from rts_oktmo_catalog import OktmoCatalogError, load_subject_oktmo
+    from rts_oktmo_catalog import OktmoCatalogError, federal_districts, load_subject_oktmo
 
     try:
         rows = load_subject_oktmo()
     except OktmoCatalogError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return {"ok": True, "items": [row.as_dict() for row in rows]}
+    return {"ok": True, "districts": federal_districts(), "items": [row.as_dict() for row in rows]}
 
 
 @app.post("/api/rts/pp/draft-from-catalog", name="api_rts_pp_draft_from_catalog")

@@ -2246,6 +2246,7 @@ html.sidebar-collapsed .sidebar-theme .theme-toggle {
 .pp-virtual-ev-table-wrap .eis-table {
   width: 100%;
 }
+#pp-core-ktru,
 #pp-virtual-ktru,
 #pp-virtual-ev-ktru {
   min-width: 16rem;
@@ -2310,6 +2311,10 @@ html.sidebar-collapsed .sidebar-theme .theme-toggle {
 .pp-core-focus-row td {
   background: var(--accent-active);
   box-shadow: inset 3px 0 0 var(--accent);
+}
+tr.pp-core-district td {
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  font-weight: 600;
 }
 .pp-core-ladder {
   display: flex;

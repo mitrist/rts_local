@@ -149,6 +149,21 @@ def _positive_rts_amount(raw: str) -> str:
     return formatted
 
 
+def _normalize_quantity_from(raw: Any, qty_amount: float, label: str) -> str:
+    if raw is None:
+        return ""
+    src = str(raw).strip()
+    if not src:
+        return ""
+    formatted = format_rts_quantity(src)
+    amount = parse_money_amount(formatted.replace(",", ".")) if formatted else None
+    if amount is None or amount <= 0:
+        raise CatalogPpDraftError(f"{label}: количество от должно быть больше 0.")
+    if amount > qty_amount:
+        raise CatalogPpDraftError(f"{label}: количество от больше количества.")
+    return formatted
+
+
 def normalize_region_prices(raw: Any) -> list[dict[str, str]]:
     if not isinstance(raw, list) or not raw:
         raise CatalogPpDraftError("Выберите хотя бы один регион с ценой и количеством больше 0.")
@@ -171,14 +186,16 @@ def normalize_region_prices(raw: Any) -> list[dict[str, str]]:
         except OktmoCatalogError as exc:
             raise CatalogPpDraftError(str(exc)) from exc
         seen.add(code)
-        out.append(
-            {
-                "code": subject.code,
-                "name": subject.name,
-                "unit_price": price,
-                "quantity": quantity,
-            }
-        )
+        item = {
+            "code": subject.code,
+            "name": subject.name,
+            "unit_price": price,
+            "quantity": quantity,
+        }
+        quantity_from = _normalize_quantity_from(row.get("quantity_from"), qty_amount, subject.name)
+        if quantity_from:
+            item["quantity_from"] = quantity_from
+        out.append(item)
     if not out:
         raise CatalogPpDraftError("Выберите хотя бы один регион с ценой и количеством больше 0.")
     return out
@@ -188,11 +205,12 @@ def build_catalog_delivery_places(regions: list[dict[str, str]]) -> list[dict[st
     places: list[dict[str, Any]] = []
     for region in regions:
         qty = region["quantity"]
+        min_qty = str(region.get("quantity_from") or "").strip() or CATALOG_MIN_QUANTITY
         place = {
             "kladr": DEFAULT_DELIVERY["kladr"],
             "oktmo": {"code": region["code"], "name": region["name"]},
             "unitPrice": region["unit_price"],
-            "minQuantity": CATALOG_MIN_QUANTITY,
+            "minQuantity": min_qty,
             "maxQuantity": qty,
             "vatRateCode": DEFAULT_DELIVERY["vatRateCode"],
             "minDeliveryDays": DEFAULT_DELIVERY["minDeliveryDays"],

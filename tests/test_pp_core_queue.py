@@ -8,6 +8,7 @@ from catalog_pp_draft import CATALOG_PURCHASE_NUMBER, apply_catalog_to_draft_ite
 from eis_analytics_db import (
     analytics_db_path,
     delete_rts_pp_draft,
+    get_pp_core_delivery,
     list_pp_core_queue,
     list_pp_core_variants,
     save_rts_pp_draft,
@@ -225,6 +226,22 @@ def test_enqueue_skips_gap_and_duplicate_active(tmp_path: Path):
         raise AssertionError("expected CoreQueueError")
     except CoreQueueError as exc:
         assert "Ни один вариант" in str(exc)
+
+
+def test_enqueue_saves_quantity_from(tmp_path: Path):
+    db = analytics_db_path(tmp_path)
+    persist_core_snapshot(db, CHAIR_KTRU_CODE, [_ready_combo()], _chair_item(), total_notices=10)
+    result = enqueue_core_variants(
+        db,
+        ktru_code=CHAIR_KTRU_CODE,
+        variant_nos=[1],
+        regions=[{"code": "01000000", "unit_price": "4500", "quantity": "10", "quantity_from": "2"}],
+        rts_profile="IPSokolova",
+    )
+    assert result.enqueued == 1
+    saved = get_pp_core_delivery(db, CHAIR_KTRU_CODE)
+    assert saved[0]["quantity"] == "10,0"
+    assert saved[0]["quantity_from"] == "2,0"
 
 
 def test_enqueue_allows_needs_validation(tmp_path: Path):

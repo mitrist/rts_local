@@ -14,13 +14,18 @@
 
 <section class="card">
   <h3>КТРУ</h3>
-  <div class="pp-create-search-wrap">
-    <label>
-      Поиск по имени
-    <input type="text" id="pp-core-ktru-name" autocomplete="off" placeholder="Стул ученический / жидкое мыло">
-    </label>
-    <ul id="pp-core-ktru-suggest" class="pp-create-suggest" hidden></ul>
-  </div>
+  <label>
+    Позиция
+    <select id="pp-core-ktru">
+      {% if ktru_options %}
+        {% for item in ktru_options %}
+        <option value="{{ item.code }}" {% if item.code == default_ktru %}selected{% endif %}>{{ item.label }}</option>
+        {% endfor %}
+      {% else %}
+        <option value="">Нет сохранённых ядер</option>
+      {% endif %}
+    </select>
+  </label>
   <label>
     Код
     <input type="text" id="pp-core-ktru-code" value="{{ default_ktru }}" autocomplete="off">
@@ -32,7 +37,6 @@
   <p class="hint" id="pp-core-meta">
     {% if not history_available %}База eis_history на этой машине не подключена — доступен только сохранённый снимок.{% endif %}
   </p>
-  <p class="hint" id="pp-core-known" hidden></p>
 </section>
 
 <section class="card">
@@ -77,16 +81,17 @@
     <button type="button" class="button secondary" id="pp-core-regions-frequent">Частые регионы опроса</button>
     <input type="text" id="pp-core-fill-price" placeholder="Цена, напр. 4500">
     <button type="button" class="button secondary" id="pp-core-fill-price-btn">Проставить цену</button>
+    <input type="text" id="pp-core-fill-qty-from" placeholder="от, напр. 1">
     <input type="text" id="pp-core-fill-qty" placeholder="Кол-во, напр. 10">
     <button type="button" class="button secondary" id="pp-core-fill-qty-btn">Проставить количество</button>
   </div>
   <div class="pp-create-regions-table">
     <table class="eis-table">
       <thead>
-        <tr><th></th><th>Субъект</th><th>ОКТМО</th><th>Цена за шт.</th><th>Количество</th></tr>
+        <tr><th></th><th>Субъект</th><th>ОКТМО</th><th>Цена за шт.</th><th>Количество от</th><th>Количество</th></tr>
       </thead>
       <tbody id="pp-core-regions-body">
-        <tr><td colspan="5" class="hint">Загрузка справочника ОКТМО…</td></tr>
+        <tr><td colspan="6" class="hint">Загрузка справочника ОКТМО…</td></tr>
       </tbody>
     </table>
   </div>
@@ -118,6 +123,7 @@
     runId: "",
     pollTimer: null,
     regions: [],
+    districts: [],
     savedDelivery: [],
     variants: [],
     focusNo: 0,
@@ -171,12 +177,16 @@
       var cb = tr.querySelector("input[type='checkbox']");
       var price = tr.querySelector("input[data-field='price']");
       var qty = tr.querySelector("input[data-field='qty']");
+      var qtyFrom = tr.querySelector("input[data-field='qty_from']");
       if (!cb || !cb.checked || !price || !qty) return;
-      rows.push({
+      var row = {
         code: cb.getAttribute("data-code") || "",
         unit_price: price.value,
         quantity: qty.value
-      });
+      };
+      var from = qtyFrom ? (qtyFrom.value || "").trim() : "";
+      if (from) row.quantity_from = from;
+      rows.push(row);
     });
     return rows;
   }
@@ -198,27 +208,27 @@
       ", ядро " + (meta.core_n != null ? meta.core_n : "—") +
       " (" + share + "%), порог " + (meta.core_target || 0.7) + "/" + (meta.core_max || 0.8);
   }
-  function renderKnown(codes) {
-    var el = $("pp-core-known");
-    el.innerHTML = "";
-    if (!codes || !codes.length) {
-      el.hidden = true;
+  function renderKtruSelect(options) {
+    var sel = $("pp-core-ktru");
+    if (!sel) return;
+    var current = state.ktru || sel.value || "";
+    var items = options || [];
+    sel.innerHTML = "";
+    if (!items.length) {
+      var empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "Нет сохранённых ядер";
+      sel.appendChild(empty);
       return;
     }
-    el.hidden = false;
-    el.appendChild(document.createTextNode("Снимки ядра: "));
-    codes.forEach(function (code, i) {
-      if (i) el.appendChild(document.createTextNode(" · "));
-      var btn = document.createElement("button");
-      btn.type = "button";
-      btn.className = "button secondary";
-      btn.textContent = code;
-      btn.addEventListener("click", function () {
-        $("pp-core-ktru-code").value = code;
-        loadSnapshot(code).then(function () { showOk("Снимок " + code + " загружен."); }).catch(function (err) { showErr(err.message); });
-      });
-      el.appendChild(btn);
+    items.forEach(function (item) {
+      var opt = document.createElement("option");
+      opt.value = item.code || "";
+      opt.textContent = item.label || item.code || "";
+      sel.appendChild(opt);
     });
+    var known = items.some(function (item) { return item.code === current; });
+    if (known) sel.value = current;
   }
   function formatPrice(p) {
     if (p == null || p === "") return "—";
@@ -359,60 +369,138 @@
       var cb = tr.querySelector("input[type='checkbox']");
       var price = tr.querySelector("input[data-field='price']");
       var qty = tr.querySelector("input[data-field='qty']");
+      var qtyFrom = tr.querySelector("input[data-field='qty_from']");
       if (!cb) return;
       var hit = byCode[cb.getAttribute("data-code") || ""];
       if (!hit) return;
       cb.checked = true;
       if (price) price.value = hit.unit_price || hit.unitPrice || "";
       if (qty) qty.value = hit.quantity || "";
+      if (qtyFrom) qtyFrom.value = hit.quantity_from || "";
     });
+  }
+  function regionBoxes(districtId) {
+    return document.querySelectorAll(
+      "#pp-core-regions-body tr[data-region-district='" + districtId + "'] input[data-code]"
+    );
+  }
+  function syncDistrictChecks() {
+    document.querySelectorAll("#pp-core-regions-body tr.pp-core-district").forEach(function (header) {
+      var id = header.getAttribute("data-district") || "";
+      var cb = header.querySelector("input[type='checkbox']");
+      if (!cb) return;
+      var boxes = regionBoxes(id);
+      var on = 0;
+      boxes.forEach(function (box) { if (box.checked) on += 1; });
+      cb.checked = boxes.length > 0 && on === boxes.length;
+      cb.indeterminate = on > 0 && on < boxes.length;
+    });
+  }
+  function groupedRegions(items) {
+    var buckets = {};
+    (items || []).forEach(function (row) {
+      var id = row.federal_district || "other";
+      if (!buckets[id]) buckets[id] = [];
+      buckets[id].push(row);
+    });
+    var seen = {};
+    var groups = [];
+    (state.districts || []).forEach(function (district) {
+      var id = district.id || "";
+      if (!buckets[id] || !buckets[id].length) return;
+      seen[id] = true;
+      groups.push({ id: id, name: district.name || id, rows: buckets[id] });
+    });
+    Object.keys(buckets).forEach(function (id) {
+      if (seen[id] || !buckets[id].length) return;
+      var sample = buckets[id][0];
+      groups.push({ id: id, name: sample.federal_district_name || id, rows: buckets[id] });
+    });
+    return groups;
+  }
+  function appendRegionRow(body, row) {
+    var districtId = row.federal_district || "other";
+    var tr = document.createElement("tr");
+    tr.setAttribute("data-region-district", districtId);
+    var tdCb = document.createElement("td");
+    var cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.setAttribute("data-code", row.code);
+    cb.addEventListener("change", syncDistrictChecks);
+    tdCb.appendChild(cb);
+    var tdName = document.createElement("td");
+    tdName.textContent = row.name || "";
+    var tdCode = document.createElement("td");
+    var codeEl = document.createElement("code");
+    codeEl.textContent = row.code || "";
+    tdCode.appendChild(codeEl);
+    var tdPrice = document.createElement("td");
+    var price = document.createElement("input");
+    price.type = "text";
+    price.setAttribute("data-field", "price");
+    price.placeholder = "0,00";
+    var tdQtyFrom = document.createElement("td");
+    var qtyFrom = document.createElement("input");
+    qtyFrom.type = "text";
+    qtyFrom.setAttribute("data-field", "qty_from");
+    qtyFrom.placeholder = "от";
+    var tdQty = document.createElement("td");
+    var qty = document.createElement("input");
+    qty.type = "text";
+    qty.setAttribute("data-field", "qty");
+    qty.placeholder = "шт.";
+    function maybeCheck() {
+      if ((price.value || "").trim() || (qty.value || "").trim() || (qtyFrom.value || "").trim()) {
+        cb.checked = true;
+        syncDistrictChecks();
+      }
+    }
+    price.addEventListener("input", maybeCheck);
+    qtyFrom.addEventListener("input", maybeCheck);
+    qty.addEventListener("input", maybeCheck);
+    tdPrice.appendChild(price);
+    tdQtyFrom.appendChild(qtyFrom);
+    tdQty.appendChild(qty);
+    tr.appendChild(tdCb);
+    tr.appendChild(tdName);
+    tr.appendChild(tdCode);
+    tr.appendChild(tdPrice);
+    tr.appendChild(tdQtyFrom);
+    tr.appendChild(tdQty);
+    body.appendChild(tr);
   }
   function renderRegions(items) {
     state.regions = items || [];
     var body = $("pp-core-regions-body");
     body.innerHTML = "";
     if (!state.regions.length) {
-      body.innerHTML = "<tr><td colspan='5' class='hint'>Справочник ОКТМО пуст.</td></tr>";
+      body.innerHTML = "<tr><td colspan='6' class='hint'>Справочник ОКТМО пуст.</td></tr>";
       return;
     }
-    state.regions.forEach(function (row) {
-      var tr = document.createElement("tr");
+    groupedRegions(state.regions).forEach(function (group) {
+      var header = document.createElement("tr");
+      header.className = "pp-core-district";
+      header.setAttribute("data-district", group.id);
       var tdCb = document.createElement("td");
       var cb = document.createElement("input");
       cb.type = "checkbox";
-      cb.setAttribute("data-code", row.code);
+      cb.setAttribute("data-district", group.id);
+      cb.addEventListener("change", function () {
+        var on = cb.checked;
+        regionBoxes(group.id).forEach(function (box) { box.checked = on; });
+        cb.indeterminate = false;
+      });
       tdCb.appendChild(cb);
       var tdName = document.createElement("td");
-      tdName.textContent = row.name || "";
-      var tdCode = document.createElement("td");
-      var codeEl = document.createElement("code");
-      codeEl.textContent = row.code || "";
-      tdCode.appendChild(codeEl);
-      var tdPrice = document.createElement("td");
-      var price = document.createElement("input");
-      price.type = "text";
-      price.setAttribute("data-field", "price");
-      price.placeholder = "0,00";
-      var tdQty = document.createElement("td");
-      var qty = document.createElement("input");
-      qty.type = "text";
-      qty.setAttribute("data-field", "qty");
-      qty.placeholder = "шт.";
-      function maybeCheck() {
-        if ((price.value || "").trim() || (qty.value || "").trim()) cb.checked = true;
-      }
-      price.addEventListener("input", maybeCheck);
-      qty.addEventListener("input", maybeCheck);
-      tdPrice.appendChild(price);
-      tdQty.appendChild(qty);
-      tr.appendChild(tdCb);
-      tr.appendChild(tdName);
-      tr.appendChild(tdCode);
-      tr.appendChild(tdPrice);
-      tr.appendChild(tdQty);
-      body.appendChild(tr);
+      tdName.colSpan = 5;
+      tdName.textContent = (group.name || group.id) + " (" + group.rows.length + ")";
+      header.appendChild(tdCb);
+      header.appendChild(tdName);
+      body.appendChild(header);
+      group.rows.forEach(function (row) { appendRegionRow(body, row); });
     });
     applySavedDelivery(state.savedDelivery);
+    syncDistrictChecks();
   }
   function renderQueue(data) {
     var items = (data && data.items) || [];
@@ -470,7 +558,7 @@
     $("pp-core-ktru-code").value = state.ktru || "";
     state.savedDelivery = data.delivery || [];
     renderMeta(data.meta, state.ktru);
-    renderKnown(data.ktru_codes || []);
+    renderKtruSelect(data.ktru_options || []);
     renderVariants(data.variants || []);
     applySavedDelivery(state.savedDelivery);
     if (data.history_available === false) {
@@ -484,35 +572,11 @@
     return fetchJson("/api/rts/pp/core/variants?ktru_code=" + encodeURIComponent(ktru)).then(applySnapshot);
   }
 
-  var searchTimer = null;
-  $("pp-core-ktru-name").addEventListener("input", function () {
-    var q = ($("pp-core-ktru-name").value || "").trim();
-    clearTimeout(searchTimer);
-    if (q.length < 2) {
-      $("pp-core-ktru-suggest").hidden = true;
-      return;
-    }
-    searchTimer = setTimeout(function () {
-      fetchJson("/api/rts/ktru/search?q=" + encodeURIComponent(q)).then(function (data) {
-        var list = $("pp-core-ktru-suggest");
-        list.innerHTML = "";
-        (data.items || []).forEach(function (item) {
-          var li = document.createElement("li");
-          var btn = document.createElement("button");
-          btn.type = "button";
-          btn.textContent = (item.name || "") + " (" + (item.code || "") + ")";
-          btn.addEventListener("click", function () {
-            $("pp-core-ktru-name").value = item.name || "";
-            $("pp-core-ktru-code").value = item.code || "";
-            list.hidden = true;
-            loadSnapshot(item.code).catch(function (err) { showErr(err.message); });
-          });
-          li.appendChild(btn);
-          list.appendChild(li);
-        });
-        list.hidden = !list.children.length;
-      }).catch(function (err) { showErr(err.message); });
-    }, 280);
+  $("pp-core-ktru").addEventListener("change", function () {
+    var code = ($("pp-core-ktru").value || "").trim();
+    if (!code) return;
+    $("pp-core-ktru-code").value = code;
+    loadSnapshot(code).then(function () { showOk("Снимок загружен."); }).catch(function (err) { showErr(err.message); });
   });
 
   $("pp-core-load").addEventListener("click", function () {
@@ -547,9 +611,11 @@
   });
   $("pp-core-regions-all").addEventListener("click", function () {
     document.querySelectorAll("#pp-core-regions-body input[type='checkbox']").forEach(function (cb) { cb.checked = true; });
+    syncDistrictChecks();
   });
   $("pp-core-regions-none").addEventListener("click", function () {
     document.querySelectorAll("#pp-core-regions-body input[type='checkbox']").forEach(function (cb) { cb.checked = false; });
+    syncDistrictChecks();
   });
   $("pp-core-regions-frequent").addEventListener("click", function () {
     var code = ($("pp-core-ktru-code").value || "").trim();
@@ -563,13 +629,14 @@
         cb.checked = on;
         if (on) n += 1;
       });
+      syncDistrictChecks();
       showErr("");
       showOk("Отмечено регионов опроса: " + n + (data.big_pp_n ? " (из " + data.big_pp_n + " крупных ПП)" : "") + ".");
     }).catch(function (err) { showErr(err.message); });
   });
   function fillChecked(field, value) {
     document.querySelectorAll("#pp-core-regions-body tr").forEach(function (tr) {
-      var cb = tr.querySelector("input[type='checkbox']");
+      var cb = tr.querySelector("input[data-code]");
       var inp = tr.querySelector("input[data-field='" + field + "']");
       if (cb && cb.checked && inp) inp.value = value;
     });
@@ -578,7 +645,10 @@
     fillChecked("price", ($("pp-core-fill-price").value || "").trim());
   });
   $("pp-core-fill-qty-btn").addEventListener("click", function () {
-    fillChecked("qty", ($("pp-core-fill-qty").value || "").trim());
+    var from = ($("pp-core-fill-qty-from").value || "").trim();
+    var qty = ($("pp-core-fill-qty").value || "").trim();
+    if (from) fillChecked("qty_from", from);
+    if (qty) fillChecked("qty", qty);
   });
   $("pp-core-enqueue").addEventListener("click", function () {
     var nos = selectedVariantNos();
@@ -610,10 +680,11 @@
   });
 
   fetchJson("/api/rts/pp/oktmo-subjects").then(function (data) {
+    state.districts = data.districts || [];
     renderRegions(data.items || []);
     return loadSnapshot(state.ktru);
   }).catch(function (err) {
-    $("pp-core-regions-body").innerHTML = "<tr><td colspan='5' class='hint'>" + err.message + "</td></tr>";
+    $("pp-core-regions-body").innerHTML = "<tr><td colspan='6' class='hint'>" + err.message + "</td></tr>";
     return loadSnapshot(state.ktru);
   }).catch(function (err) { showErr(err.message); });
 })();

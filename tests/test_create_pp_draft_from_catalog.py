@@ -9,6 +9,7 @@ import pytest
 from catalog_pp_draft import (
     CatalogPpDraftError,
     apply_catalog_to_draft_item,
+    build_catalog_delivery_places,
     catalog_template_for_form,
     normalize_region_prices,
 )
@@ -118,6 +119,42 @@ def test_unknown_oktmo_rejected():
 def test_region_without_quantity_rejected():
     with pytest.raises(CatalogPpDraftError):
         normalize_region_prices([{"code": "01000000", "unit_price": "4500"}])
+
+
+def test_quantity_from_becomes_min_quantity():
+    regions = normalize_region_prices(
+        [{"code": "01000000", "unit_price": "4500", "quantity": "10", "quantity_from": "2"}]
+    )
+    assert regions[0]["quantity"] == "10,0"
+    assert regions[0]["quantity_from"] == "2,0"
+    places = build_catalog_delivery_places(regions)
+    assert places[0]["minQuantity"] == "2,0"
+    assert places[0]["maxQuantity"] == "10,0"
+    assert places[0]["available"] == "10,0"
+
+
+def test_quantity_from_absent_keeps_catalog_minimum():
+    regions = normalize_region_prices(
+        [{"code": "01000000", "unit_price": "4500", "quantity": "10", "quantity_from": "  "}]
+    )
+    assert "quantity_from" not in regions[0]
+    places = build_catalog_delivery_places(regions)
+    assert places[0]["minQuantity"] == "1,0"
+    assert places[0]["maxQuantity"] == "10,0"
+
+
+def test_quantity_from_above_quantity_rejected():
+    with pytest.raises(CatalogPpDraftError, match="количество от больше количества"):
+        normalize_region_prices(
+            [{"code": "01000000", "unit_price": "4500", "quantity": "10", "quantity_from": "11"}]
+        )
+
+
+def test_quantity_from_zero_rejected():
+    with pytest.raises(CatalogPpDraftError, match="количество от должно быть больше 0"):
+        normalize_region_prices(
+            [{"code": "01000000", "unit_price": "4500", "quantity": "10", "quantity_from": "0"}]
+        )
 
 
 def test_create_pp_draft_from_catalog_mocked(tmp_path):

@@ -44,16 +44,37 @@ def test_pp_core_page_200():
     assert "Ядро КТРУ" in r.text
     assert "Отметить доступные" in r.text
     assert "Частые регионы опроса" in r.text
+    assert "Количество от" in r.text
+    assert 'id="pp-core-fill-qty-from"' in r.text
     assert "Создать и опубликовать выбранные" in r.text
     assert "pp-core-focus" in r.text
     assert "pp-core-focus-ladder" in r.text
-    assert "pp-core-known" in r.text
-    assert "ученический" in r.text
-    assert "жидкое мыло" in r.text
+    assert 'id="pp-core-ktru"' in r.text
+    assert "Поиск по имени" not in r.text
+    assert 'id="pp-core-ktru-name"' not in r.text
     assert "Виртуальные ПП" in r.text
     assert "Журнал сопоставления" in r.text
     assert "nav-stack-registries" in r.text
     assert "Итоги дня" in r.text
+
+
+def test_pp_core_dropdown_lists_saved_cores(monkeypatch, tmp_path: Path):
+    db = analytics_db_path(tmp_path)
+    persist_core_snapshot(db, CHAIR_KTRU_CODE, [_ready_combo()], _chair_item(), total_notices=10)
+    monkeypatch.setattr(web_main, "_eis_analytics_db_path", lambda: db)
+    monkeypatch.setattr(web_main, "_META", tmp_path)
+    monkeypatch.setattr(web_main, "_ktru_display_name", lambda _db, code: "Стул на металлическом каркасе" if code == CHAIR_KTRU_CODE else "")
+    client = TestClient(web_main.app)
+    page = client.get("/pp-core")
+    assert page.status_code == 200
+    assert f'<option value="{CHAIR_KTRU_CODE}"' in page.text
+    assert "Стул на металлическом каркасе" in page.text
+    assert "Поиск по имени" not in page.text
+    api = client.get("/api/rts/pp/core/variants", params={"ktru_code": CHAIR_KTRU_CODE})
+    assert api.status_code == 200
+    options = api.json()["ktru_options"]
+    assert options[0]["code"] == CHAIR_KTRU_CODE
+    assert options[0]["label"] == f"Стул на металлическом каркасе ({CHAIR_KTRU_CODE})"
 
 
 def test_pp_virtual_page_200():
